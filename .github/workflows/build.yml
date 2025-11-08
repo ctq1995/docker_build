@@ -63,7 +63,6 @@ jobs:
               --include-data-file=app/myfont.otf=myfont.otf \
               --output-dir=dist_${{ matrix.target }} \
               --assume-yes-for-downloads \
-              --static-libpython=yes \
               app/DownloadLog.py
           "
           docker run --rm \
