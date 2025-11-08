@@ -1,4 +1,3 @@
-
 name: Build Application with Nuitka
 
 on:
@@ -44,7 +43,7 @@ jobs:
             echo 'Force refreshing YUM cache and installing Tcl/Tk and build tools...' && \
             yum clean all && \
             yum makecache && \
-            yum install -y tcl-devel tk-devel && \
+            yum install -y tcl-devel tk-devel python3.13-devel && \
             \
             cd /work && \
             echo 'Upgrading pip...' && \
@@ -66,7 +65,7 @@ jobs:
               --include-data-file=app/myfont.otf=myfont.otf \
               --output-dir=dist_${{ matrix.target }} \
               --assume-yes-for-downloads \
-              --static-libpython=no \
+              --static-libpython=yes \
               app/DownloadLog.py
           "
           docker run --rm \
@@ -79,7 +78,7 @@ jobs:
         if: runner.os == 'Windows'
         uses: actions/setup-python@v5
         with:
-          python-version: '3.13'
+          python-version: '3.13.2'
           architecture: ${{ matrix.arch }}
 
       - name: Install Dependencies and Build (Windows)
@@ -104,6 +103,7 @@ jobs:
             --assume-yes-for-downloads `
             --include-data-file=app/myfont.otf=myfont.otf `
             --output-dir=dist_${{ matrix.target}} `
+			--windows-icon-from-ico=app/logico.ico `
             app/DownloadLog.py
 
       # --- 上传所有平台的构建产物 ---
