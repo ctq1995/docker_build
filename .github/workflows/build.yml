@@ -38,6 +38,7 @@ jobs:
       - name: Build with Manylinux for Linux
         if: runner.os == 'Linux'
         run: |
+          # 使用多行字符串定义在Docker容器内执行的命令
           COMMANDS="
             set -ex && \
             echo 'Force refreshing YUM cache and installing Tcl/Tk...' && \
@@ -46,7 +47,15 @@ jobs:
             yum install -y tcl-devel tk-devel && \
             \
             cd /work && \
-            /opt/python/cp311-cp311/bin/pip install --upgrade pip nuitka ttkbootstrap && \
+            echo 'Upgrading pip...' && \
+            /opt/python/cp311-cp311/bin/pip install --upgrade pip && \
+            \
+            echo 'Installing project dependencies from requirements.txt...' && \
+            /opt/python/cp311-cp311/bin/pip install -r requirements.txt && \
+            \
+            echo 'Installing build tools (Nuitka)...' && \
+            /opt/python/cp311-cp311/bin/pip install nuitka && \
+            \
             echo 'Extracting static libpython required by Nuitka...' && \
             (cd /opt/_internal && tar xf static-libs-for-embedding-only.tar.xz) && \
             \
@@ -55,8 +64,10 @@ jobs:
               --onefile \
               --standalone \
               --enable-plugin=tk-inter \
+              --enable-plugin=asyncio \
               --tcl-library-dir=/usr/lib64 \
               --tk-library-dir=/usr/lib64 \
+              --include-module=cryptography \
               --include-data-file=app/myfont.otf=myfont.otf \
               --output-dir=dist_${{ matrix.target }} \
               app
@@ -78,15 +89,24 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          python -m pip install --upgrade pip nuitka
-          pip install ttkbootstrap
+          Write-Host 'Upgrading pip...'
+          python -m pip install --upgrade pip
           
+          Write-Host 'Installing project dependencies from requirements.txt...'
+          pip install -r requirements.txt
+          
+          Write-Host 'Installing build tools (Nuitka)...'
+          pip install nuitka
+          
+          Write-Host 'Starting Nuitka build...'
           python -m nuitka `
             --onefile `
             --standalone `
             --windows-disable-console `
             --enable-plugin=tk-inter `
+            --enable-plugin=asyncio `
             --assume-yes-for-downloads `
+            --include-module=cryptography `
             --include-data-file=app/myfont.otf=myfont.otf `
             --output-dir=dist_${{ matrix.target }} `
             app
