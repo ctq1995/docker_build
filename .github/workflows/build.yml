@@ -103,7 +103,7 @@ jobs:
             --assume-yes-for-downloads `
             --include-data-file=app/myfont.otf=myfont.otf `
             --output-dir=dist_${{ matrix.target}} `
-			--windows-icon-from-ico=app/logico.ico `
+            --windows-icon-from-ico=app/logico.ico `
             app/DownloadLog.py
 
       # --- 上传所有平台的构建产物 ---
