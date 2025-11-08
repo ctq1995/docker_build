@@ -34,19 +34,37 @@ jobs:
         if: runner.os == 'Linux' && matrix.arch == 'arm64'
         uses: docker/setup-qemu-action@v3
 
-      # --- Linux 构建流程（修复版本）---
+      # --- Linux 构建流程（动态查找版本）---
       - name: Build with Manylinux for Linux
         if: runner.os == 'Linux'
         run: |
           COMMANDS="
             set -ex && \
-            echo 'Installing Tcl/Tk runtime and development packages...' && \
-            yum install -y tcl tk tcl-devel tk-devel && \
+            echo 'Installing Tcl/Tk packages...' && \
+            yum install -y tcl tk tcl-devel tk-devel tcllib && \
             \
-            echo 'Verifying Tcl/Tk installation...' && \
-            ls -la /usr/share/tcl8.6/ && \
-            echo 'Found msgcat.tcl:' && \
-            find /usr/share -name 'msgcat.tcl' -type f && \
+            echo 'Finding Tcl/Tk file locations...' && \
+            find /usr -name 'tcl8.*' -type d | head -5 && \
+            find /usr -name 'msgcat.tcl' -type f && \
+            find /usr -name 'init.tcl' -type f | head -3 && \
+            \
+            TCL_VERSION=\$(ls /usr/share/ | grep '^tcl[0-9]' | head -1) && \
+            echo \"Found Tcl version: \$TCL_VERSION\" && \
+            TK_VERSION=\$(ls /usr/share/ | grep '^tk[0-9]' | head -1) && \
+            echo \"Found Tk version: \$TK_VERSION\" && \
+            \
+            TCL_DIR=\"/usr/share/\$TCL_VERSION\" && \
+            TK_DIR=\"/usr/share/\$TK_VERSION\" && \
+            \
+            echo \"Tcl directory: \$TCL_DIR\" && \
+            echo \"Tk directory: \$TK_DIR\" && \
+            \
+            if [ -f \"\$TCL_DIR/msgcat.tcl\" ]; then \
+              echo \"Found msgcat.tcl at: \$TCL_DIR/msgcat.tcl\"; \
+            else \
+              echo \"msgcat.tcl not found in \$TCL_DIR, trying alternative...\"; \
+              find /usr -name 'msgcat.tcl' -type f -exec dirname {} \; | head -1; \
+            fi && \
             \
             echo 'Extracting static Python libraries...' && \
             cd /opt/_internal && tar xf static-libs-for-embedding-only.tar.xz && \
@@ -55,25 +73,21 @@ jobs:
             echo 'Upgrading pip...' && \
             /opt/python/cp313-cp313/bin/pip install --upgrade pip && \
             \
-            echo 'Installing project dependencies from requirements.txt...' && \
+            echo 'Installing project dependencies...' && \
             /opt/python/cp313-cp313/bin/pip install -r requirements.txt && \
             \
             echo 'Installing Nuitka...' && \
             /opt/python/cp313-cp313/bin/pip install nuitka && \
             \
-            echo 'Starting Nuitka build with Tcl/Tk data files...' && \
+            echo 'Building with dynamic paths...' && \
             /opt/python/cp313-cp313/bin/python -m nuitka \
               --onefile \
               --standalone \
               --enable-plugin=tk-inter \
-              --tcl-library-dir=/usr/share/tcl8.6 \
-              --tk-library-dir=/usr/share/tk8.6 \
-              --include-data-dir=/usr/share/tcl8.6=tcl8.6 \
-              --include-data-dir=/usr/share/tk8.6=tk8.6 \
-              --include-data-file=/usr/share/tcl8.6/msgcat.tcl=tcl8.6/msgcat.tcl \
-              --include-data-file=/usr/share/tcl8.6/init.tcl=tcl8.6/init.tcl \
-              --include-data-file=/usr/share/tcl8.6/auto.tcl=tcl8.6/auto.tcl \
-              --include-data-file=/usr/share/tcl8.6/safe.tcl=tcl8.6/safe.tcl \
+              --tcl-library-dir=\$TCL_DIR \
+              --tk-library-dir=\$TK_DIR \
+              --include-data-dir=\$TCL_DIR=\$(basename \$TCL_DIR) \
+              --include-data-dir=\$TK_DIR=\$(basename \$TK_DIR) \
               --include-data-file=app/myfont.otf=myfont.otf \
               --output-dir=dist_${{ matrix.target }} \
               --assume-yes-for-downloads \
@@ -85,7 +99,7 @@ jobs:
             ${{ matrix.manylinux_image }} \
             /bin/bash -c "$COMMANDS"
 
-      # --- Windows 构建流程 ---
+      # --- Windows 构建流程保持不变 ---
       - name: Set up Python for Windows
         if: runner.os == 'Windows'
         uses: actions/setup-python@v5
@@ -100,7 +114,7 @@ jobs:
           Write-Host 'Upgrading pip...'
           python -m pip install --upgrade pip
           
-          Write-Host 'Installing project dependencies from requirements.txt...'
+          Write-Host 'Installing project dependencies...'
           pip install -r requirements.txt
           
           Write-Host 'Installing Nuitka...'
@@ -118,7 +132,7 @@ jobs:
             --windows-icon-from-ico=app/logico.ico `
             app/DownloadLog.py
 
-      # --- 上传所有平台的构建产物 ---
+      # --- 上传构建产物 ---
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
