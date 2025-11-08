@@ -34,50 +34,56 @@ jobs:
         if: runner.os == 'Linux' && matrix.arch == 'arm64'
         uses: docker/setup-qemu-action@v3
 
-      # --- Linux 构建流程 ---
-		- name: Build with Manylinux for Linux
-		  if: runner.os == 'Linux'
-		  run: |
-			COMMANDS="
-			  set -ex && \
-			  echo 'Installing Tcl/Tk runtime and development packages...' && \
-			  yum install -y tcl tk tcl-devel tk-devel && \
-			  \
-			  echo 'Extracting static Python libraries...' && \
-			  cd /opt/_internal && tar xf static-libs-for-embedding-only.tar.xz && \
-			  \
-			  cd /work && \
-			  echo 'Upgrading pip...' && \
-			  /opt/python/cp313-cp313/bin/pip install --upgrade pip && \
-			  \
-			  echo 'Installing project dependencies from requirements.txt...' && \
-			  /opt/python/cp313-cp313/bin/pip install -r requirements.txt && \
-			  \
-			  echo 'Installing Nuitka...' && \
-			  /opt/python/cp313-cp313/bin/pip install nuitka && \
-			  \
-			  echo 'Starting Nuitka build...' && \
-			  /opt/python/cp313-cp313/bin/python -m nuitka \
-				--onefile \
-				--standalone \
-				--enable-plugin=tk-inter \
-				--tcl-library-dir=/usr/share/tcl8.6 \
-				--tk-library-dir=/usr/share/tk8.6 \
-				--include-data-dir=/usr/share/tcl8.6=tcl8.6 \
-				--include-data-dir=/usr/share/tk8.6=tk8.6 \
-				--include-data-file=/usr/share/tcl8.6/msgcat.tcl=msgcat.tcl \
-				--include-data-file=/usr/share/tcl8.6/init.tcl=init.tcl \
-				--include-data-file=app/myfont.otf=myfont.otf \
-				--output-dir=dist_${{ matrix.target }} \
-				--assume-yes-for-downloads \
-				--static-libpython=yes \
-				app/DownloadLog.py
-			"
-			docker run --rm \
-			  -v "$(pwd)":/work \
-			  ${{ matrix.manylinux_image }} \
-			  /bin/bash -c "$COMMANDS"
-
+      # --- Linux 构建流程（修复版本）---
+      - name: Build with Manylinux for Linux
+        if: runner.os == 'Linux'
+        run: |
+          COMMANDS="
+            set -ex && \
+            echo 'Installing Tcl/Tk runtime and development packages...' && \
+            yum install -y tcl tk tcl-devel tk-devel && \
+            \
+            echo 'Verifying Tcl/Tk installation...' && \
+            ls -la /usr/share/tcl8.6/ && \
+            echo 'Found msgcat.tcl:' && \
+            find /usr/share -name 'msgcat.tcl' -type f && \
+            \
+            echo 'Extracting static Python libraries...' && \
+            cd /opt/_internal && tar xf static-libs-for-embedding-only.tar.xz && \
+            \
+            cd /work && \
+            echo 'Upgrading pip...' && \
+            /opt/python/cp313-cp313/bin/pip install --upgrade pip && \
+            \
+            echo 'Installing project dependencies from requirements.txt...' && \
+            /opt/python/cp313-cp313/bin/pip install -r requirements.txt && \
+            \
+            echo 'Installing Nuitka...' && \
+            /opt/python/cp313-cp313/bin/pip install nuitka && \
+            \
+            echo 'Starting Nuitka build with Tcl/Tk data files...' && \
+            /opt/python/cp313-cp313/bin/python -m nuitka \
+              --onefile \
+              --standalone \
+              --enable-plugin=tk-inter \
+              --tcl-library-dir=/usr/share/tcl8.6 \
+              --tk-library-dir=/usr/share/tk8.6 \
+              --include-data-dir=/usr/share/tcl8.6=tcl8.6 \
+              --include-data-dir=/usr/share/tk8.6=tk8.6 \
+              --include-data-file=/usr/share/tcl8.6/msgcat.tcl=tcl8.6/msgcat.tcl \
+              --include-data-file=/usr/share/tcl8.6/init.tcl=tcl8.6/init.tcl \
+              --include-data-file=/usr/share/tcl8.6/auto.tcl=tcl8.6/auto.tcl \
+              --include-data-file=/usr/share/tcl8.6/safe.tcl=tcl8.6/safe.tcl \
+              --include-data-file=app/myfont.otf=myfont.otf \
+              --output-dir=dist_${{ matrix.target }} \
+              --assume-yes-for-downloads \
+              --static-libpython=yes \
+              app/DownloadLog.py
+          "
+          docker run --rm \
+            -v "$(pwd)":/work \
+            ${{ matrix.manylinux_image }} \
+            /bin/bash -c "$COMMANDS"
 
       # --- Windows 构建流程 ---
       - name: Set up Python for Windows
