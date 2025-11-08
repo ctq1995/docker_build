@@ -16,7 +16,6 @@ jobs:
           - os: ubuntu-22.04
             arch: amd64
             target: linux_amd64
-            # 使用包含 Python 3.13 的 manylinux 镜像
             manylinux_image: quay.io/pypa/manylinux_2_28_x86_64
           - os: ubuntu-22.04
             arch: arm64
@@ -41,7 +40,7 @@ jobs:
         run: |
           COMMANDS="
             set -ex && \
-            echo 'Force refreshing YUM cache and installing Tcl/Tk...' && \
+            echo 'Force refreshing YUM cache and installing Tcl/Tk and build tools...' && \
             yum clean all && \
             yum makecache && \
             yum install -y tcl-devel tk-devel && \
@@ -56,19 +55,19 @@ jobs:
             echo 'Installing Nuitka...' && \
             /opt/python/cp313-cp313/bin/pip install nuitka && \
             \
-            echo 'Extracting static libpython required by Nuitka...' && \
-            (cd /opt/python/cp313-cp313 && tar xf static-libs-for-embedding-only.tar.xz) && \
-            \
             echo 'Starting Nuitka build...' && \
+            # Nuitka will now handle downloading static libs if needed
             /opt/python/cp313-cp313/bin/python -m nuitka \
-              --onefile \
               --standalone \
+              --onefile \
               --enable-plugin=tk-inter \
               --tcl-library-dir=/usr/lib64 \
               --tk-library-dir=/usr/lib64 \
               --include-module=cryptography \
               --include-data-file=app/myfont.otf=myfont.otf \
               --output-dir=dist_${{ matrix.target }} \
+              # <<<--- 关键修改：让 Nuitka 自动下载所需文件
+              --assume-yes-for-downloads \
               app
           "
           docker run --rm \
