@@ -30,16 +30,23 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # --- Linux 构建流程 (使用 Manylinux Docker) ---
+      - name: Set up QEMU for ARM emulation
+        if: runner.os == 'Linux' && matrix.arch == 'arm64'
+        uses: docker/setup-qemu-action@v3
+
+      # --- Linux 构建流程 ---
       - name: Build with Manylinux for Linux
         if: runner.os == 'Linux'
         run: |
           # 定义要在 Docker 容器内执行的一系列命令
           COMMANDS="
             set -ex && \
+            \
+            echo 'Installing system dependencies (Tcl/Tk)...' && \
+            yum install -y tcl-devel tk-devel && \
+            \
             cd /work && \
             /opt/python/cp311-cp311/bin/pip install --upgrade pip nuitka ttkbootstrap && \
-            \
             echo 'Extracting static libpython required by Nuitka...' && \
             (cd /opt/_internal && tar xf static-libs-for-embedding-only.tar.xz) && \
             \
@@ -50,7 +57,7 @@ jobs:
               --enable-plugin=tk-inter \
               --include-data-file=app/myfont.otf=myfont.otf \
               --output-dir=dist_${{ matrix.target }} \
-              app/__main__.py
+              app
           "
           # 运行 Docker 容器并执行上面定义的命令
           docker run --rm \
@@ -58,19 +65,21 @@ jobs:
             ${{ matrix.manylinux_image }} \
             /bin/bash -c "$COMMANDS"
 
-      # --- Windows 构建流程 (保持原样) ---
-      - name: Setup Python, Install Dependencies and Build (Windows)
+      # --- Windows 构建流程 ---
+      - name: Set up Python for Windows
+        if: runner.os == 'Windows'
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          architecture: ${{ matrix.arch }}
+
+      - name: Install Dependencies and Build (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          # 1. 设置 Python
-          & "C:\actions\python\setup-python.ps1" -architecture ${{ matrix.arch }} -python-version '3.11'
-          
-          # 2. 安装和升级依赖
           python -m pip install --upgrade pip nuitka
           pip install ttkbootstrap
           
-          # 3. 运行构建
           python -m nuitka `
             --onefile `
             --standalone `
@@ -79,7 +88,7 @@ jobs:
             --include-data-file=app/myfont.otf=myfont.otf `
             --output-dir=dist_${{ matrix.target }} `
             --accept-all-questions `
-            app/__main__.py
+            app # <-- 也在这里应用了优化
 
       # --- 上传所有平台的构建产物 ---
       - name: Upload Artifact
