@@ -16,12 +16,11 @@ jobs:
           - os: ubuntu-22.04
             arch: amd64
             target: linux_amd64
-            # <<<--- 修改点 1: 使用包含 Python 3.13 的 manylinux 镜像
+            # 使用包含 Python 3.13 的 manylinux 镜像
             manylinux_image: quay.io/pypa/manylinux_2_28_x86_64
           - os: ubuntu-22.04
             arch: arm64
             target: linux_arm64
-            # <<<--- 修改点 1: 使用包含 Python 3.13 的 manylinux 镜像
             manylinux_image: quay.io/pypa/manylinux_2_28_aarch64
           - os: windows-latest
             arch: x64
@@ -40,7 +39,6 @@ jobs:
       - name: Build with Manylinux for Linux
         if: runner.os == 'Linux'
         run: |
-          # 使用多行字符串定义在Docker容器内执行的命令
           COMMANDS="
             set -ex && \
             echo 'Force refreshing YUM cache and installing Tcl/Tk...' && \
@@ -49,7 +47,6 @@ jobs:
             yum install -y tcl-devel tk-devel && \
             \
             cd /work && \
-            # <<<--- 修改点 2: 更新容器内的 Python 路径到 3.13
             echo 'Upgrading pip...' && \
             /opt/python/cp313-cp313/bin/pip install --upgrade pip && \
             \
@@ -60,8 +57,7 @@ jobs:
             /opt/python/cp313-cp313/bin/pip install nuitka && \
             \
             echo 'Extracting static libpython required by Nuitka...' && \
-            # <<<--- 修改点 3: 更新静态库的解压路径
-            (cd /opt/python/cp313-cp313 && tar xf Python-3.13.tgz) && \
+            (cd /opt/python/cp313-cp313 && tar xf static-libs-for-embedding-only.tar.xz) && \
             \
             echo 'Starting Nuitka build...' && \
             /opt/python/cp313-cp313/bin/python -m nuitka \
@@ -85,7 +81,6 @@ jobs:
         if: runner.os == 'Windows'
         uses: actions/setup-python@v5
         with:
-          # <<<--- 修改点 4: 更新 Python 版本
           python-version: '3.13.2'
           architecture: ${{ matrix.arch }}
 
