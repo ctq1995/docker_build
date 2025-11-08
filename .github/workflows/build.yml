@@ -24,7 +24,7 @@ jobs:
           - os: windows-latest
             arch: x64
             target: win_amd64
-            manylinux_image: "" # Windows 不需要
+            manylinux_image: ""
 
     steps:
       - name: Checkout repository
@@ -34,21 +34,25 @@ jobs:
       - name: Build with Manylinux for Linux
         if: runner.os == 'Linux'
         run: |
-          # 定义要在 Docker 容器内执行的命令
-          # 注意：/opt/python/cp311-cp311/bin/ 是 manylinux 镜像中 Python 3.11 的路径
+          # 定义要在 Docker 容器内执行的一系列命令
           COMMANDS="
-          cd /work &&
-          /opt/python/cp311-cp311/bin/pip install --upgrade pip nuitka ttkbootstrap &&
-          /opt/python/cp311-cp311/bin/python -m nuitka \
-            --onefile \
-            --standalone \
-            --enable-plugin=tk-inter \
-            --include-data-file=app/myfont.otf=myfont.otf \
-            --output-dir=dist_${{ matrix.target }} \
-            app/__main__.py
+            set -ex && \
+            cd /work && \
+            /opt/python/cp311-cp311/bin/pip install --upgrade pip nuitka ttkbootstrap && \
+            \
+            echo 'Extracting static libpython required by Nuitka...' && \
+            (cd /opt/_internal && tar xf static-libs-for-embedding-only.tar.xz) && \
+            \
+            echo 'Starting Nuitka build...' && \
+            /opt/python/cp311-cp311/bin/python -m nuitka \
+              --onefile \
+              --standalone \
+              --enable-plugin=tk-inter \
+              --include-data-file=app/myfont.otf=myfont.otf \
+              --output-dir=dist_${{ matrix.target }} \
+              app/__main__.py
           "
-          # 运行 Docker 容器，并将当前目录挂载到容器的 /work 目录
-          # 这样，容器内生成的文件就会出现在我们的 Runner 文件系统中
+          # 运行 Docker 容器并执行上面定义的命令
           docker run --rm \
             -v "$(pwd)":/work \
             ${{ matrix.manylinux_image }} \
@@ -59,17 +63,14 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          # 1. 设置 Python (Windows需要在这里单独设置)
+          # 1. 设置 Python
           & "C:\actions\python\setup-python.ps1" -architecture ${{ matrix.arch }} -python-version '3.11'
           
-          # 2. 安装依赖
-          python -m pip install --upgrade pip
+          # 2. 安装和升级依赖
+          python -m pip install --upgrade pip nuitka
           pip install ttkbootstrap
           
-          # 3. 升级 Nuitka
-          python -m pip install --upgrade nuitka
-          
-          # 4. 运行构建
+          # 3. 运行构建
           python -m nuitka `
             --onefile `
             --standalone `
