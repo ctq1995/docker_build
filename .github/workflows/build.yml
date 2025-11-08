@@ -43,6 +43,9 @@ jobs:
             echo 'Installing Tcl/Tk development packages...' && \
             yum install -y tcl-devel tk-devel && \
             \
+            echo 'Extracting static Python libraries...' && \
+            cd /opt/_internal && tar xf static-libs-for-embedding-only.tar.xz && \
+            \
             cd /work && \
             echo 'Upgrading pip...' && \
             /opt/python/cp313-cp313/bin/pip install --upgrade pip && \
@@ -63,6 +66,7 @@ jobs:
               --include-data-file=app/myfont.otf=myfont.otf \
               --output-dir=dist_${{ matrix.target }} \
               --assume-yes-for-downloads \
+              --static-libpython=yes \
               app/DownloadLog.py
           "
           docker run --rm \
