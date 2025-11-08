@@ -38,10 +38,8 @@ jobs:
       - name: Build with Manylinux for Linux
         if: runner.os == 'Linux'
         run: |
-          # 定义要在 Docker 容器内执行的一系列命令
           COMMANDS="
             set -ex && \
-            \
             echo 'Force refreshing YUM cache and installing Tcl/Tk...' && \
             yum clean all && \
             yum makecache && \
@@ -57,11 +55,12 @@ jobs:
               --onefile \
               --standalone \
               --enable-plugin=tk-inter \
+              --tcl-library-dir=/usr/lib64 \
+              --tk-library-dir=/usr/lib64 \
               --include-data-file=app/myfont.otf=myfont.otf \
               --output-dir=dist_${{ matrix.target }} \
               app
           "
-          # 运行 Docker 容器并执行上面定义的命令
           docker run --rm \
             -v "$(pwd)":/work \
             ${{ matrix.manylinux_image }} \
@@ -87,9 +86,10 @@ jobs:
             --standalone `
             --windows-disable-console `
             --enable-plugin=tk-inter `
+            --assume-yes-for-downloads `
             --include-data-file=app/myfont.otf=myfont.otf `
             --output-dir=dist_${{ matrix.target }} `
-            app # <-- 已移除 --accept-all-questions
+            app
 
       # --- 上传所有平台的构建产物 ---
       - name: Upload Artifact
