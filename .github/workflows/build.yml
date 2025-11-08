@@ -2,23 +2,26 @@ name: Build Multi-platform Executables
 
 on:
   push:
-    branches: [ "main", "master" ] # 当代码推送到主分支时触发
-  workflow_dispatch: # 允许手动触发
+    branches: [ "main", "master" ]
+  workflow_dispatch:
 
 jobs:
   build:
     strategy:
+      # fail-fast: false 会让所有任务都跑完，即使中途有失败的。
+      # 这对于调试非常有用，你可以看到每个平台的具体错误。
+      fail-fast: false
       matrix:
         include:
           - os: ubuntu-latest
             arch: amd64
-            nuitka_target: linux_amd64
+            target: linux_amd64
           - os: ubuntu-latest
             arch: arm64
-            nuitka_target: linux_arm64
+            target: linux_arm64
           - os: windows-latest
             arch: amd64
-            nuitka_target: win64
+            target: win_amd64 # 修改了名称以保持一致性
 
     runs-on: ${{ matrix.os }}
 
@@ -35,31 +38,58 @@ jobs:
       uses: actions/setup-python@v5
       with:
         python-version: '3.13'
-        architecture: x64 # GitHub Action runner is x64, QEMU handles ARM
 
-    - name: Install dependencies (Linux)
+    # ⭐ 新增：缓存 Pip 依赖项
+    - name: Cache Pip packages
+      uses: actions/cache@v4
+      with:
+        # Pip 缓存的路径
+        path: ~/.cache/pip
+        # 创建一个独特的 key 用于识别缓存。当依赖改变时，key 会改变，缓存会重建。
+        # 这里我们简单地基于操作系统和 Python 版本来创建 key。
+        key: ${{ runner.os }}-pip-${{ hashFiles('**/__main__.py') }} # 如果你有 requirements.txt，用它会更好
+        restore-keys: |
+          ${{ runner.os }}-pip-
+
+    # ⭐ 优化：为 Linux 添加了更多必要的编译库
+    - name: Install system dependencies (Linux)
       if: runner.os == 'Linux'
       run: |
         sudo apt-get update
-        sudo apt-get install -y build-essential python3-tk
+        sudo apt-get install -y build-essential python3-tk libssl-dev libffi-dev
 
     - name: Install Python packages
       run: python -m pip install -U nuitka ttkbootstrap paramiko pillow
 
-    - name: Run Nuitka Build
+    # ⭐ 优化：为不同平台使用不同的命令格式，更清晰
+    - name: Run Nuitka Build (Linux)
+      if: runner.os == 'Linux'
+      run: |
+        python -m nuitka \
+          --onefile \
+          --standalone \
+          --enable-plugin=tk-inter \
+          --enable-plugin=pillow \
+          --include-data-file=myfont.otf=myfont.otf \
+          --output-dir=dist_${{ matrix.target }} \
+          __main__.py
+
+    - name: Run Nuitka Build (Windows)
+      if: runner.os == 'Windows'
       run: |
         python -m nuitka `
           --onefile `
           --standalone `
+          --windows-disable-console `
           --enable-plugin=tk-inter `
           --enable-plugin=pillow `
           --include-data-file=myfont.otf=myfont.otf `
-          --output-dir=dist_${{ matrix.nuitka_target }} `
+          --output-dir=dist_${{ matrix.target }} `
           __main__.py
-      shell: pwsh # 使用 PowerShell 以便 ` 是跨平台的换行符
+      shell: pwsh # Windows 上继续使用 pwsh 以支持 ` 换行符
 
     - name: Upload Artifact
       uses: actions/upload-artifact@v4
       with:
-        name: log-downloader-${{ matrix.nuitka_target }}
-        path: dist_${{ matrix.nuitka_target }}/__main__*
+        name: log-downloader-${{ matrix.target }}
+        path: dist_${{ matrix.target }}/__main__*
