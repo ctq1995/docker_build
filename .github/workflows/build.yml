@@ -83,6 +83,7 @@ jobs:
           --enable-plugin=tk-inter `
           --include-data-file=app/myfont.otf=myfont.otf `
           --output-dir=dist_${{ matrix.target }} `
+          --accept-all-questions `
           app/__main__.py
       shell: pwsh
 
