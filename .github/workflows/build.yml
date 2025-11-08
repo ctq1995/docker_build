@@ -1,3 +1,4 @@
+
 name: Build Application with Nuitka
 
 on:
@@ -66,7 +67,6 @@ jobs:
               --output-dir=dist_${{ matrix.target }} \
               --assume-yes-for-downloads \
               --static-libpython=no \
-              # <<<--- 关键修改：指定主 Python 文件而不是目录
               app/DownloadLog.py
           "
           docker run --rm \
@@ -79,7 +79,7 @@ jobs:
         if: runner.os == 'Windows'
         uses: actions/setup-python@v5
         with:
-          python-version: '3.13.2'
+          python-version: '3.13'
           architecture: ${{ matrix.arch }}
 
       - name: Install Dependencies and Build (Windows)
@@ -104,7 +104,6 @@ jobs:
             --assume-yes-for-downloads `
             --include-data-file=app/myfont.otf=myfont.otf `
             --output-dir=dist_${{ matrix.target}} `
-            # <<<--- 关键修改：指定主 Python 文件而不是目录
             app/DownloadLog.py
 
       # --- 上传所有平台的构建产物 ---
