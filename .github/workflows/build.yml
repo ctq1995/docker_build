@@ -36,11 +36,12 @@ jobs:
       with:
         python-version: '3.13'
 
+    # ⭐ 优化：缓存键现在基于 requirements.txt 的内容，更准确
     - name: Cache Pip packages
       uses: actions/cache@v4
       with:
         path: ~/.cache/pip
-        key: ${{ runner.os }}-pip-${{ hashFiles('**/__main__.py') }}
+        key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements.txt') }}
         restore-keys: |
           ${{ runner.os }}-pip-
 
@@ -50,10 +51,17 @@ jobs:
         sudo apt-get update
         sudo apt-get install -y build-essential python3-tk libssl-dev libffi-dev
 
+    # ⭐ 优化：使用 requirements.txt 安装依赖，并单独安装构建工具 Nuitka
     - name: Install Python packages
-      run: python -m pip install -U nuitka ttkbootstrap paramiko pillow
+      run: |
+        python -m pip install -U pip nuitka
+        python -m pip install -r requirements.txt
 
-    # ⭐ 修正：移除了不再需要的 --enable-plugin=pillow
+    # 调试步骤：列出仓库中的所有文件，确认结构正确
+    - name: List files in repository
+      run: ls -R
+
+    # ⭐ 核心修正：更新了 Nuitka 命令以使用 app/ 子目录中的文件
     - name: Run Nuitka Build (Linux)
       if: runner.os == 'Linux'
       run: |
@@ -61,11 +69,10 @@ jobs:
           --onefile \
           --standalone \
           --enable-plugin=tk-inter \
-          --include-data-file=myfont.otf=myfont.otf \
+          --include-data-file=app/myfont.otf=myfont.otf \
           --output-dir=dist_${{ matrix.target }} \
-          __main__.py
+          app/__main__.py
 
-    # ⭐ 修正：移除了不再需要的 --enable-plugin=pillow
     - name: Run Nuitka Build (Windows)
       if: runner.os == 'Windows'
       run: |
@@ -74,13 +81,14 @@ jobs:
           --standalone `
           --windows-disable-console `
           --enable-plugin=tk-inter `
-          --include-data-file=myfont.otf=myfont.otf `
+          --include-data-file=app/myfont.otf=myfont.otf `
           --output-dir=dist_${{ matrix.target }} `
-          __main__.py
+          app/__main__.py
       shell: pwsh
 
     - name: Upload Artifact
       uses: actions/upload-artifact@v4
       with:
-        name: log-downloader-${{ matrix.target }}
+        name: app-release-${{ matrix.target }}
+        # 路径修正：Nuitka 会根据你的入口脚本命名输出文件
         path: dist_${{ matrix.target }}/__main__*
