@@ -98,14 +98,14 @@ jobs:
           Write-Host 'Starting Nuitka build...'
           python -m nuitka `
             # <<<--- 关键修改：在 PowerShell 换行前添加分号
-            --standalone ;`
-            --onefile ;`
-            --windows-disable-console ;`
-            --enable-plugin=tk-inter ;`
-            --assume-yes-for-downloads ;`
-            --include-module=cryptography ;`
-            --include-data-file=app/myfont.otf=myfont.otf ;`
-            --output-dir=dist_${{ matrix.target}} ;`
+            --standalone `
+            --onefile `
+            --windows-disable-console `
+            --enable-plugin=tk-inter `
+            --assume-yes-for-downloads `
+            --include-module=cryptography `
+            --include-data-file=app/myfont.otf=myfont.otf `
+            --output-dir=dist_${{ matrix.target}} `
             app
 
       # --- 上传所有平台的构建产物 ---
