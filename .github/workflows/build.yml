@@ -56,7 +56,8 @@ jobs:
             /opt/python/cp313-cp313/bin/pip install nuitka && \
             \
             echo 'Starting Nuitka build...' && \
-            /opt/python/cp311-cp311/bin/python -m nuitka \
+            # <<<--- 关键修改：使用相同的 Python 版本运行 Nuitka
+            /opt/python/cp313-cp313/bin/python -m nuitka \
               --onefile \
               --standalone \
               --enable-plugin=tk-inter \
@@ -65,7 +66,6 @@ jobs:
               --include-data-file=app/myfont.otf=myfont.otf \
               --output-dir=dist_${{ matrix.target }} \
               --assume-yes-for-downloads \
-              # <<<--- 关键修改：告诉 Nuitka 编译 'app' 目录
               app/
           "
           docker run --rm \
@@ -103,7 +103,7 @@ jobs:
             --assume-yes-for-downloads `
             --include-data-file=app/myfont.otf=myfont.otf `
             --output-dir=dist_${{ matrix.target}} `
-            app
+            app/
 
       # --- 上传所有平台的构建产物 ---
       - name: Upload Artifact
