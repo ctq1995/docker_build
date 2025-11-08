@@ -40,8 +40,8 @@ jobs:
         run: |
           COMMANDS="
             set -ex && \
-            echo 'Installing Tcl/Tk development packages...' && \
-            yum install -y tcl-devel tk-devel && \
+            echo 'Installing Tcl/Tk runtime and development packages...' && \
+            yum install -y tcl tk tcl-devel tk-devel && \
             \
             echo 'Extracting static Python libraries...' && \
             cd /opt/_internal && tar xf static-libs-for-embedding-only.tar.xz && \
@@ -61,8 +61,10 @@ jobs:
               --onefile \
               --standalone \
               --enable-plugin=tk-inter \
-              --tcl-library-dir=/usr/lib64 \
-              --tk-library-dir=/usr/lib64 \
+              --tcl-library-dir=/usr/share/tcl8.6 \
+              --tk-library-dir=/usr/share/tk8.6 \
+              --include-data-dir=/usr/share/tcl8.6=tcl8.6 \
+              --include-data-dir=/usr/share/tk8.6=tk8.6 \
               --include-data-file=app/myfont.otf=myfont.otf \
               --output-dir=dist_${{ matrix.target }} \
               --assume-yes-for-downloads \
