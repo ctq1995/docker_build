@@ -93,7 +93,7 @@ jobs:
           # 复制项目文件
           COPY requirements.txt .
           COPY app/ ./app/
-          COPY myfont.otf ./
+          COPY app/myfont.otf ./
           
           # 安装项目依赖
           RUN /usr/local/bin/python3.13 -m pip install --upgrade pip && \
