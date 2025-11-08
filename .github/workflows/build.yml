@@ -57,7 +57,6 @@ jobs:
             \
             echo 'Starting Nuitka build...' && \
             /opt/python/cp313-cp313/bin/python -m nuitka \
-              # <<<--- 关键修改：确保 --standalone 在 --onefile 之前
               --standalone \
               --onefile \
               --enable-plugin=tk-inter \
@@ -67,7 +66,8 @@ jobs:
               --include-data-file=app/myfont.otf=myfont.otf \
               --output-dir=dist_${{ matrix.target }} \
               --assume-yes-for-downloads \
-              app
+              # <<<--- 关键修改：告诉 Nuitka 编译 'app' 目录
+              app/
           "
           docker run --rm \
             -v "$(pwd)":/work \
@@ -97,15 +97,15 @@ jobs:
           
           Write-Host 'Starting Nuitka build...'
           python -m nuitka `
-            # <<<--- 关键修改：确保 --standalone 在 --onefile 之前
-            --standalone `
-            --onefile `
-            --windows-disable-console `
-            --enable-plugin=tk-inter `
-            --assume-yes-for-downloads `
-            --include-module=cryptography `
-            --include-data-file=app/myfont.otf=myfont.otf `
-            --output-dir=dist_${{ matrix.target}} `
+            # <<<--- 关键修改：在 PowerShell 换行前添加分号
+            --standalone ;`
+            --onefile ;`
+            --windows-disable-console ;`
+            --enable-plugin=tk-inter ;`
+            --assume-yes-for-downloads ;`
+            --include-module=cryptography ;`
+            --include-data-file=app/myfont.otf=myfont.otf ;`
+            --output-dir=dist_${{ matrix.target}} ;`
             app
 
       # --- 上传所有平台的构建产物 ---
