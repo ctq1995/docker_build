@@ -40,10 +40,8 @@ jobs:
         run: |
           COMMANDS="
             set -ex && \
-            echo 'Force refreshing YUM cache and installing Tcl/Tk and build tools...' && \
-            yum clean all && \
-            yum makecache && \
-            yum install -y tcl-devel tk-devel python3.13-devel && \
+            echo 'Installing Tcl/Tk development packages...' && \
+            yum install -y tcl-devel tk-devel && \
             \
             cd /work && \
             echo 'Upgrading pip...' && \
