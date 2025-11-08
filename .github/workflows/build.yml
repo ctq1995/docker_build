@@ -42,7 +42,9 @@ jobs:
           COMMANDS="
             set -ex && \
             \
-            echo 'Installing system dependencies (Tcl/Tk)...' && \
+            echo 'Force refreshing YUM cache and installing Tcl/Tk...' && \
+            yum clean all && \
+            yum makecache && \
             yum install -y tcl-devel tk-devel && \
             \
             cd /work && \
@@ -87,8 +89,7 @@ jobs:
             --enable-plugin=tk-inter `
             --include-data-file=app/myfont.otf=myfont.otf `
             --output-dir=dist_${{ matrix.target }} `
-            --accept-all-questions `
-            app # <-- 也在这里应用了优化
+            app # <-- 已移除 --accept-all-questions
 
       # --- 上传所有平台的构建产物 ---
       - name: Upload Artifact
