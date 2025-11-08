@@ -1,4 +1,4 @@
-name: Build with Python 3.13.2 from Source
+name: Multi-Stage Docker Build with Python 3.13.2
 
 on:
   push:
@@ -6,43 +6,33 @@ on:
   workflow_dispatch:
 
 jobs:
-  build-python313-arm64:
-    name: Build Python 3.13.2 for Ubuntu 20.04 ARM64
+  docker-multi-stage:
+    name: Multi-Stage Docker Build Python 3.13.2
     runs-on: ubuntu-latest
-    timeout-minutes: 180  # 编译需要很长时间
     
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Set up QEMU for ARM64
+      - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
         with:
           platforms: arm64
 
-      - name: Build Python 3.13.2 from Source
+      - name: Create Multi-stage Dockerfile
         run: |
-          echo "Building Python 3.13.2 from source for Ubuntu 20.04 ARM64"
+          cat > Dockerfile.python313-arm64 << 'EOF'
+          # 阶段1: 构建 Python 3.13.2
+          FROM --platform=linux/arm64 ubuntu:20.04 as python-builder
           
-          COMMANDS="
-            set -ex
-            
-            echo '=== System Information ==='
-            uname -a
-            lsb_release -a
-            cat /proc/cpuinfo | grep 'model name' | head -1
-            cat /proc/meminfo | grep MemTotal
-            
-            echo '=== Updating System ==='
-            apt-get update
-            
-            echo '=== Installing Build Dependencies ==='
-            # 安装编译 Python 3.13.2 所需的所有依赖
-            apt-get install -y \
+          ENV DEBIAN_FRONTEND=noninteractive
+          ENV PYTHONUNBUFFERED=1
+          
+          # 安装构建依赖
+          RUN apt-get update && apt-get install -y \
               build-essential \
               wget \
               curl \
-              git \
               libssl-dev \
               zlib1g-dev \
               libncurses5-dev \
@@ -55,109 +45,140 @@ jobs:
               libexpat1-dev \
               liblzma-dev \
               libffi-dev \
-              uuid-dev \
               tk-dev \
               tcl-dev \
               tcl \
               tk \
-              blt-dev \
-              python3-distutils \
-              python3-dev
-            
-            echo '=== Downloading Python 3.13.2 Source ==='
-            cd /tmp
-            wget https://www.python.org/ftp/python/3.13.2/Python-3.13.2.tgz
-            tar -xzf Python-3.13.2.tgz
-            cd Python-3.13.2
-            
-            echo '=== Configuring Python Build ==='
-            # 配置编译选项，优化 ARM64 性能
-            ./configure \
-              --prefix=/usr/local \
-              --enable-optimizations \
-              --enable-loadable-sqlite-extensions \
-              --with-ensurepip=install \
-              --with-tcltk-includes='-I/usr/include/tcl8.6 -I/usr/include/tk8.6' \
-              --with-tcltk-libs='-L/usr/lib/x86_64-linux-gnu -ltcl8.6 -ltk8.6' \
-              --build=aarch64-linux-gnu \
-              --host=aarch64-linux-gnu
-            
-            echo '=== Building Python 3.13.2 (This will take a while) ==='
-            # 使用所有可用的 CPU 核心进行编译
-            make -j$(nproc)
-            
-            echo '=== Installing Python 3.13.2 ==='
-            make altinstall  # 使用 altinstall 避免覆盖系统 Python
-            
-            echo '=== Verifying Python 3.13.2 Installation ==='
-            /usr/local/bin/python3.13 --version
-            /usr/local/bin/python3.13 -c \"import sys; print(f'Python executable: {sys.executable}')\"
-            /usr/local/bin/python3.13 -c \"import tkinter as tk; print('Tkinter available')\" || echo \"Tkinter not available\"
-            
-            # 确保 pip 可用
-            /usr/local/bin/python3.13 -m ensurepip --upgrade
-            
-            cd /work
-            
-            echo '=== Installing Project Dependencies ==='
-            # 使用新编译的 Python 3.13.2 安装依赖
-            /usr/local/bin/python3.13 -m pip install --upgrade pip
-            /usr/local/bin/python3.13 -m pip install -r requirements.txt
-            /usr/local/bin/python3.13 -m pip install nuitka
-            
-            echo '=== Finding Tcl/Tk Libraries ==='
-            # 查找系统 Tcl/Tk 库
-            TCL_DIR=\$(find /usr -name 'tcl8.*' -type d | head -1)
-            TK_DIR=\$(find /usr -name 'tk8.*' -type d | head -1)
-            TCL_LIB=\$(find /usr -name 'libtcl*.so' | head -1)
-            TK_LIB=\$(find /usr -name 'libtk*.so' | head -1)
-            
-            echo \"TCL_DIR: \$TCL_DIR\"
-            echo \"TK_DIR: \$TK_DIR\"
-            echo \"TCL_LIB: \$TCL_LIB\"
-            echo \"TK_LIB: \$TK_LIB\"
-            
-            echo '=== Building Application with Nuitka ==='
-            # 使用 Python 3.13.2 和 Nuitka 构建
-            /usr/local/bin/python3.13 -m nuitka \
-              --onefile \
-              --standalone \
-              --enable-plugin=tk-inter \
-              --tcl-library-dir=\$TCL_DIR \
-              --tk-library-dir=\$TK_DIR \
-              --include-data-dir=\$TCL_DIR=\$(basename \$TCL_DIR) \
-              --include-data-dir=\$TK_DIR=\$(basename \$TK_DIR) \
-              --include-data-file=app/myfont.otf=myfont.otf \
-              --output-dir=dist_ubuntu20.04_arm64_py313 \
-              --assume-yes-for-downloads \
-              --python-flag=no_warnings \
-              --show-progress \
-              --show-memory \
-              app/DownloadLog.py
-              
-            echo '=== Build Completed Successfully ==='
-            ls -la dist_ubuntu20.04_arm64_py313/
-            
-            # 验证二进制文件
-            file dist_ubuntu20.04_arm64_py313/*.bin
-          "
+              && rm -rf /var/lib/apt/lists/*
           
-          # 在 ARM64 容器中执行构建
-          docker run --rm --platform linux/arm64 ubuntu:20.04 \
-            -v "$(pwd)":/work \
-            /bin/bash -c "$COMMANDS"
+          # 编译 Python 3.13.2
+          WORKDIR /tmp
+          RUN wget https://www.python.org/ftp/python/3.13.2/Python-3.13.2.tgz && \
+              tar -xzf Python-3.13.2.tgz && \
+              cd Python-3.13.2 && \
+              ./configure \
+                  --prefix=/usr/local \
+                  --enable-optimizations \
+                  --enable-loadable-sqlite-extensions \
+                  --with-ensurepip=install && \
+              make -j$(nproc) && \
+              make altinstall
+          
+          # 验证安装
+          RUN /usr/local/bin/python3.13 --version && \
+              /usr/local/bin/python3.13 -m ensurepip --upgrade
+          
+          # 阶段2: 构建应用
+          FROM --platform=linux/arm64 ubuntu:20.04 as app-builder
+          
+          ENV DEBIAN_FRONTEND=noninteractive
+          
+          # 安装运行时和构建依赖
+          RUN apt-get update && apt-get install -y \
+              python3 \
+              python3-tk \
+              tcl8.6 \
+              tk8.6 \
+              build-essential \
+              wget \
+              curl && \
+              rm -rf /var/lib/apt/lists/*
+          
+          # 复制编译好的 Python 3.13.2
+          COPY --from=python-builder /usr/local /usr/local
+          
+          # 设置工作目录
+          WORKDIR /app
+          
+          # 复制项目文件
+          COPY requirements.txt .
+          COPY app/ ./app/
+          COPY myfont.otf ./
+          
+          # 安装项目依赖
+          RUN /usr/local/bin/python3.13 -m pip install --upgrade pip && \
+              /usr/local/bin/python3.13 -m pip install -r requirements.txt && \
+              /usr/local/bin/python3.13 -m pip install nuitka
+          
+          # 查找 Tcl/Tk 路径
+          RUN echo "TCL_DIR=$(find /usr -name 'tcl8.*' -type d | head -1)" > /tmp/paths.txt && \
+              echo "TK_DIR=$(find /usr -name 'tk8.*' -type d | head -1)" >> /tmp/paths.txt
+          
+          # 构建应用
+          RUN source /tmp/paths.txt && \
+              /usr/local/bin/python3.13 -m nuitka \
+                  --onefile \
+                  --standalone \
+                  --enable-plugin=tk-inter \
+                  --tcl-library-dir=$TCL_DIR \
+                  --tk-library-dir=$TK_DIR \
+                  --include-data-dir=$TCL_DIR=$(basename $TCL_DIR) \
+                  --include-data-dir=$TK_DIR=$(basename $TK_DIR) \
+                  --include-data-file=myfont.otf=myfont.otf \
+                  --output-dir=dist \
+                  --assume-yes-for-downloads \
+                  app/DownloadLog.py
+          
+          # 阶段3: 创建最终运行时镜像
+          FROM --platform=linux/arm64 ubuntu:20.04 as runtime
+          
+          ENV DEBIAN_FRONTEND=noninteractive
+          
+          # 只安装运行时依赖
+          RUN apt-get update && apt-get install -y \
+              tcl8.6 \
+              tk8.6 \
+              libsqlite3-0 \
+              libssl1.1 \
+              libreadline8 \
+              libgdbm6 \
+              libdb5.3 \
+              libbz2-1.0 \
+              liblzma5 \
+              libffi7 && \
+              rm -rf /var/lib/apt/lists/*
+          
+          WORKDIR /app
+          
+          # 复制构建好的二进制文件
+          COPY --from=app-builder /app/dist/*.bin .
+          
+          # 复制必要的系统库
+          COPY --from=app-builder /usr/lib/aarch64-linux-gnu/libsqlite3.so.0 /usr/lib/aarch64-linux-gnu/
+          COPY --from=app-builder /usr/lib/aarch64-linux-gnu/libssl.so.1.1 /usr/lib/aarch64-linux-gnu/
+          COPY --from=app-builder /usr/lib/aarch64-linux-gnu/libcrypto.so.1.1 /usr/lib/aarch64-linux-gnu/
+          
+          ENTRYPOINT ["./DownloadLog.bin"]
+          EOF
 
-      - name: Verify ARM64 Binary
+      - name: Build Docker Image
+        run: |
+          docker buildx build \
+            --platform linux/arm64 \
+            --load \
+            -f Dockerfile.python313-arm64 \
+            -t python313-arm64-app \
+            .
+
+      - name: Extract Binary from Docker Image
+        run: |
+          # 创建容器并提取二进制文件
+          docker run --rm \
+            -v "$(pwd)/dist_ubuntu20.04_arm64_python313":/output \
+            python313-arm64-app \
+            cp /app/DownloadLog.bin /output/
+
+      - name: Verify Binary
         run: |
           echo "=== Verifying ARM64 Binary ==="
-          file dist_ubuntu20.04_arm64_py313/*.bin
-          ls -lh dist_ubuntu20.04_arm64_py313/
+          file dist_ubuntu20.04_arm64_python313/DownloadLog.bin
+          ls -lh dist_ubuntu20.04_arm64_python313/
           
-          # 检查二进制文件信息
-          readelf -h dist_ubuntu20.04_arm64_py313/*.bin | grep -E "(Machine|Class)"
+          # 检查依赖
+          ldd dist_ubuntu20.04_arm64_python313/DownloadLog.bin | head -10
 
-      - name: Upload Python 3.13.2 ARM64 Binary
+      - name: Upload Final Binary
         uses: actions/upload-artifact@v4
         with:
-          name: app-ubuntu20.04_arm64_py313
-          path: dist_ubuntu20.04_arm64_py313/*.bin
+          name: app-ubuntu20.04_arm64_python313_final
+          path: dist_ubuntu20.04_arm64_python313/*.bin
