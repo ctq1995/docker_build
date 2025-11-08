@@ -1,4 +1,4 @@
-name: Self-Hosted ARM64 Runner
+name: Build with Python 3.13.2 from Source
 
 on:
   push:
@@ -6,68 +6,158 @@ on:
   workflow_dispatch:
 
 jobs:
-  build-on-arm64:
-    name: Build on ARM64 Hardware
-    # 使用自托管 ARM64 runner
-    runs-on: self-hosted-arm64
+  build-python313-arm64:
+    name: Build Python 3.13.2 for Ubuntu 20.04 ARM64
+    runs-on: ubuntu-latest
+    timeout-minutes: 180  # 编译需要很长时间
     
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Verify ARM64 Environment
-        run: |
-          echo "Running on ARM64 hardware:"
-          uname -a
-          lsb_release -a
-          arch
-          
-          echo "Python and Tcl/Tk versions:"
-          python3 --version
-          tclsh <<EOF
-          puts $tcl_version
-          EOF
+      - name: Set up QEMU for ARM64
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
 
-      - name: Install Dependencies
+      - name: Build Python 3.13.2 from Source
         run: |
-          sudo apt-get update
-          sudo apt-get install -y python3-pip python3-dev python3-tk tcl tk tcl-dev tk-dev build-essential
+          echo "Building Python 3.13.2 from source for Ubuntu 20.04 ARM64"
           
-          pip3 install --upgrade pip
-          pip3 install -r requirements.txt
-          pip3 install nuitka
+          COMMANDS="
+            set -ex
+            
+            echo '=== System Information ==='
+            uname -a
+            lsb_release -a
+            cat /proc/cpuinfo | grep 'model name' | head -1
+            cat /proc/meminfo | grep MemTotal
+            
+            echo '=== Updating System ==='
+            apt-get update
+            
+            echo '=== Installing Build Dependencies ==='
+            # 安装编译 Python 3.13.2 所需的所有依赖
+            apt-get install -y \
+              build-essential \
+              wget \
+              curl \
+              git \
+              libssl-dev \
+              zlib1g-dev \
+              libncurses5-dev \
+              libncursesw5-dev \
+              libreadline-dev \
+              libsqlite3-dev \
+              libgdbm-dev \
+              libdb5.3-dev \
+              libbz2-dev \
+              libexpat1-dev \
+              liblzma-dev \
+              libffi-dev \
+              uuid-dev \
+              tk-dev \
+              tcl-dev \
+              tcl \
+              tk \
+              blt-dev \
+              python3-distutils \
+              python3-dev
+            
+            echo '=== Downloading Python 3.13.2 Source ==='
+            cd /tmp
+            wget https://www.python.org/ftp/python/3.13.2/Python-3.13.2.tgz
+            tar -xzf Python-3.13.2.tgz
+            cd Python-3.13.2
+            
+            echo '=== Configuring Python Build ==='
+            # 配置编译选项，优化 ARM64 性能
+            ./configure \
+              --prefix=/usr/local \
+              --enable-optimizations \
+              --enable-loadable-sqlite-extensions \
+              --with-ensurepip=install \
+              --with-tcltk-includes='-I/usr/include/tcl8.6 -I/usr/include/tk8.6' \
+              --with-tcltk-libs='-L/usr/lib/x86_64-linux-gnu -ltcl8.6 -ltk8.6' \
+              --build=aarch64-linux-gnu \
+              --host=aarch64-linux-gnu
+            
+            echo '=== Building Python 3.13.2 (This will take a while) ==='
+            # 使用所有可用的 CPU 核心进行编译
+            make -j$(nproc)
+            
+            echo '=== Installing Python 3.13.2 ==='
+            make altinstall  # 使用 altinstall 避免覆盖系统 Python
+            
+            echo '=== Verifying Python 3.13.2 Installation ==='
+            /usr/local/bin/python3.13 --version
+            /usr/local/bin/python3.13 -c \"import sys; print(f'Python executable: {sys.executable}')\"
+            /usr/local/bin/python3.13 -c \"import tkinter as tk; print('Tkinter available')\" || echo \"Tkinter not available\"
+            
+            # 确保 pip 可用
+            /usr/local/bin/python3.13 -m ensurepip --upgrade
+            
+            cd /work
+            
+            echo '=== Installing Project Dependencies ==='
+            # 使用新编译的 Python 3.13.2 安装依赖
+            /usr/local/bin/python3.13 -m pip install --upgrade pip
+            /usr/local/bin/python3.13 -m pip install -r requirements.txt
+            /usr/local/bin/python3.13 -m pip install nuitka
+            
+            echo '=== Finding Tcl/Tk Libraries ==='
+            # 查找系统 Tcl/Tk 库
+            TCL_DIR=\$(find /usr -name 'tcl8.*' -type d | head -1)
+            TK_DIR=\$(find /usr -name 'tk8.*' -type d | head -1)
+            TCL_LIB=\$(find /usr -name 'libtcl*.so' | head -1)
+            TK_LIB=\$(find /usr -name 'libtk*.so' | head -1)
+            
+            echo \"TCL_DIR: \$TCL_DIR\"
+            echo \"TK_DIR: \$TK_DIR\"
+            echo \"TCL_LIB: \$TCL_LIB\"
+            echo \"TK_LIB: \$TK_LIB\"
+            
+            echo '=== Building Application with Nuitka ==='
+            # 使用 Python 3.13.2 和 Nuitka 构建
+            /usr/local/bin/python3.13 -m nuitka \
+              --onefile \
+              --standalone \
+              --enable-plugin=tk-inter \
+              --tcl-library-dir=\$TCL_DIR \
+              --tk-library-dir=\$TK_DIR \
+              --include-data-dir=\$TCL_DIR=\$(basename \$TCL_DIR) \
+              --include-data-dir=\$TK_DIR=\$(basename \$TK_DIR) \
+              --include-data-file=app/myfont.otf=myfont.otf \
+              --output-dir=dist_ubuntu20.04_arm64_py313 \
+              --assume-yes-for-downloads \
+              --python-flag=no_warnings \
+              --show-progress \
+              --show-memory \
+              app/DownloadLog.py
+              
+            echo '=== Build Completed Successfully ==='
+            ls -la dist_ubuntu20.04_arm64_py313/
+            
+            # 验证二进制文件
+            file dist_ubuntu20.04_arm64_py313/*.bin
+          "
+          
+          # 在 ARM64 容器中执行构建
+          docker run --rm --platform linux/arm64 ubuntu:20.04 \
+            -v "$(pwd)":/work \
+            /bin/bash -c "$COMMANDS"
 
-      - name: Build Application
+      - name: Verify ARM64 Binary
         run: |
-          # 查找 Tcl/Tk 路径
-          TCL_DIR=$(find /usr -name 'tcl8.*' -type d | head -1)
-          TK_DIR=$(find /usr -name 'tk8.*' -type d | head -1)
+          echo "=== Verifying ARM64 Binary ==="
+          file dist_ubuntu20.04_arm64_py313/*.bin
+          ls -lh dist_ubuntu20.04_arm64_py313/
           
-          echo "Found Tcl at: $TCL_DIR"
-          echo "Found Tk at: $TK_DIR"
-          
-          # 构建
-          python3 -m nuitka \
-            --onefile \
-            --standalone \
-            --enable-plugin=tk-inter \
-            --tcl-library-dir="$TCL_DIR" \
-            --tk-library-dir="$TK_DIR" \
-            --include-data-dir="$TCL_DIR=$(basename $TCL_DIR)" \
-            --include-data-dir="$TK_DIR=$(basename $TK_DIR)" \
-            --include-data-file=app/myfont.otf=myfont.otf \
-            --output-dir=dist_ubuntu20.04_arm64 \
-            --assume-yes-for-downloads \
-            app/DownloadLog.py
+          # 检查二进制文件信息
+          readelf -h dist_ubuntu20.04_arm64_py313/*.bin | grep -E "(Machine|Class)"
 
-      - name: Test Binary
-        run: |
-          # 在实际 ARM64 环境中测试
-          cd dist_ubuntu20.04_arm64
-          ./DownloadLog.bin --help || echo "Test completed"
-
-      - name: Upload Binary
+      - name: Upload Python 3.13.2 ARM64 Binary
         uses: actions/upload-artifact@v4
         with:
-          name: app-ubuntu20.04_arm64
-          path: dist_ubuntu20.04_arm64/*.bin
+          name: app-ubuntu20.04_arm64_py313
+          path: dist_ubuntu20.04_arm64_py313/*.bin
