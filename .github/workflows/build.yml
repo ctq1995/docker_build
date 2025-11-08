@@ -65,9 +65,9 @@ jobs:
               --include-data-file=app/myfont.otf=myfont.otf \
               --output-dir=dist_${{ matrix.target }} \
               --assume-yes-for-downloads \
-              # <<<--- 关键修改：禁用静态 libpython 链接
               --static-libpython=no \
-              app/
+              # <<<--- 关键修改：指定主 Python 文件而不是目录
+              app/DownloadLog.py
           "
           docker run --rm \
             -v "$(pwd)":/work \
@@ -104,7 +104,8 @@ jobs:
             --assume-yes-for-downloads `
             --include-data-file=app/myfont.otf=myfont.otf `
             --output-dir=dist_${{ matrix.target}} `
-            app/
+            # <<<--- 关键修改：指定主 Python 文件而不是目录
+            app/DownloadLog.py
 
       # --- 上传所有平台的构建产物 ---
       - name: Upload Artifact
