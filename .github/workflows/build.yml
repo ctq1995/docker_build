@@ -56,13 +56,12 @@ jobs:
             /opt/python/cp313-cp313/bin/pip install nuitka && \
             \
             echo 'Starting Nuitka build...' && \
-            /opt/python/cp313-cp313/bin/python -m nuitka \
-              --standalone \
+            /opt/python/cp311-cp311/bin/python -m nuitka \
               --onefile \
+              --standalone \
               --enable-plugin=tk-inter \
               --tcl-library-dir=/usr/lib64 \
               --tk-library-dir=/usr/lib64 \
-              --include-module=cryptography \
               --include-data-file=app/myfont.otf=myfont.otf \
               --output-dir=dist_${{ matrix.target }} \
               --assume-yes-for-downloads \
@@ -97,13 +96,11 @@ jobs:
           
           Write-Host 'Starting Nuitka build...'
           python -m nuitka `
-            # <<<--- 关键修改：在 PowerShell 换行前添加分号
-            --standalone `
             --onefile `
+            --standalone `
             --windows-disable-console `
             --enable-plugin=tk-inter `
             --assume-yes-for-downloads `
-            --include-module=cryptography `
             --include-data-file=app/myfont.otf=myfont.otf `
             --output-dir=dist_${{ matrix.target}} `
             app
