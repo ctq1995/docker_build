@@ -114,7 +114,7 @@ jobs:
                   --tk-library-dir=$TK_DIR \
                   --include-data-dir=$TCL_DIR=$(basename $TCL_DIR) \
                   --include-data-dir=$TK_DIR=$(basename $TK_DIR) \
-                  --include-data-file=myfont.otf=myfont.otf \
+                  --include-data-file=myfont.otf=app/myfont.otf \
                   --output-dir=dist \
                   --assume-yes-for-downloads \
                   app/DownloadLog.py
