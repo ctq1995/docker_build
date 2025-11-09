@@ -97,7 +97,6 @@ jobs:
           FROM ubuntu:20.04 AS python-builder
           LABEL stage=python-builder
           ENV DEBIAN_FRONTEND=noninteractive
-          # Install ca-certificates to allow wget to verify SSL connections securely
           RUN apt-get update && apt-get install -y --no-install-recommends \
               build-essential wget curl libssl-dev zlib1g-dev libncurses5-dev \
               libreadline-dev libsqlite3-dev libffi-dev tk-dev tcl-dev ca-certificates \
@@ -114,8 +113,9 @@ jobs:
           FROM ubuntu:20.04 AS app-builder
           LABEL stage=app-builder
           ENV DEBIAN_FRONTEND=noninteractive
+          # Install build-essential (for C compiler) and other Nuitka dependencies
           RUN apt-get update && apt-get install -y --no-install-recommends \
-              python3-tk tcl8.6 tk8.6 blt libsqlite3-0 libssl1.1 patchelf \
+              build-essential python3-tk tcl8.6 tk8.6 blt libsqlite3-0 libssl1.1 patchelf \
               && rm -rf /var/lib/apt/lists/*
           
           COPY --from=python-builder /usr/local /usr/local
