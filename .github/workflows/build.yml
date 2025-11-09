@@ -1,4 +1,6 @@
-name: Corrected Python 3.13.2 ARM64 Build
+# .github/workflows/build.yml
+
+name: Build Python ARM64 Binary
 
 on:
   push:
@@ -6,21 +8,21 @@ on:
   workflow_dispatch:
 
 jobs:
-  build-python313-corrected:
-    name: Build Python 3.13.2 ARM64 (Corrected)
+  build-arm64-binary:
+    name: Build Ubuntu ARM64 Binary
     runs-on: ubuntu-latest
     timeout-minutes: 180
     
     steps:
-      - name: Checkout repository
+      - name: Checkout Repository
         uses: actions/checkout@v4
 
-      - name: Set up QEMU for ARM64
+      - name: Set up QEMU for ARM64 cross-compilation
         uses: docker/setup-qemu-action@v3
         with:
           platforms: arm64
 
-      - name: Create Python Build Script
+      - name: Create Python Build Script for Nuitka
         id: create_script
         run: |
           cat > build_app.py << 'BUILD_SCRIPT'
@@ -29,59 +31,60 @@ jobs:
           import sys
 
           def find_tcl_tk_paths():
-              """ robustly finds Tcl/Tk paths for Nuitka. """
-              # Standard paths for Ubuntu 20.04
-              possible_paths = [
-                  '/usr/lib/tcl8.6',
-                  '/usr/lib/tk8.6',
-                  '/usr/lib/aarch64-linux-gnu/tcl8.6',
-                  '/usr/lib/aarch64-linux-gnu/tk8.6',
+              """Rigorously finds Tcl and Tk library paths for Nuitka."""
+              # Define ordered lists of common paths for tcl and tk
+              possible_tcl_paths = [
                   '/usr/share/tcltk/tcl8.6',
+                  '/usr/lib/aarch64-linux-gnu/tcl8.6',
+                  '/usr/lib/tcl8.6',
+              ]
+              possible_tk_paths = [
                   '/usr/share/tcltk/tk8.6',
+                  '/usr/lib/aarch64-linux-gnu/tk8.6',
+                  '/usr/lib/tk8.6',
               ]
               
-              tcl_dir = None
-              tk_dir = None
+              # Find the first valid path for each library
+              tcl_dir = next((path for path in possible_tcl_paths if os.path.isdir(path)), None)
+              tk_dir = next((path for path in possible_tk_paths if os.path.isdir(path)), None)
 
-              for path in possible_paths:
-                  if os.path.exists(path) and 'tcl' in path and not tcl_dir:
-                      tcl_dir = path
-                  if os.path.exists(path) and 'tk' in path and not tk_dir:
-                      tk_dir = path
-
+              # Fallback search if standard paths are not found
               if not tcl_dir or not tk_dir:
-                  print("Standard paths not found, searching filesystem...")
-                  # Fallback search if standard paths fail
-                  for root, dirs, files in os.walk('/usr'):
-                      if not tcl_dir and 'tcl8.6' in dirs:
-                          tcl_dir = os.path.join(root, 'tcl8.6')
-                      if not tk_dir and 'tk8.6' in dirs:
-                          tk_dir = os.path.join(root, 'tk8.6')
-
+                  print("Standard paths not found, attempting filesystem fallback search...")
+                  for root, dirs, _ in os.walk('/usr'):
+                      if not tcl_dir and 'tcl8.6' in dirs: tcl_dir = os.path.join(root, 'tcl8.6')
+                      if not tk_dir and 'tk8.6' in dirs: tk_dir = os.path.join(root, 'tk8.6')
+              
               return tcl_dir, tk_dir
 
           def main():
-              print("=== Starting Python Application Build ===")
+              print("=== Starting Python Application Build using Nuitka ===")
               
               tcl_dir, tk_dir = find_tcl_tk_paths()
               
               if not tcl_dir or not tk_dir:
-                  print("❌ ERROR: Could not find Tcl/Tk library paths. Aborting.")
+                  print("❌ FATAL: Could not find Tcl and/or Tk library paths. Aborting build.")
                   sys.exit(1)
               
+              if tcl_dir == tk_dir:
+                  print(f"❌ FATAL: Tcl and Tk paths are identical ({tcl_dir}), which indicates a detection error. Aborting.")
+                  sys.exit(1)
+
               print(f"✅ Found Tcl library at: {tcl_dir}")
               print(f"✅ Found Tk library at: {tk_dir}")
               
+              # Construct the Nuitka command
+              # Note: 'myfont.otf' is at the root of WORKDIR, and the script is in 'app/'
               cmd = [
                   '/usr/local/bin/python3.13', '-m', 'nuitka',
                   '--onefile',
                   '--standalone',
                   '--enable-plugin=tk-inter',
-                  '--tcl-library-dir=' + tcl_dir,
-                  '--tk-library-dir=' + tk_dir,
-                  '--include-data-dir=' + f'{tcl_dir}={os.path.basename(tcl_dir)}',
-                  '--include-data-dir=' + f'{tk_dir}={os.path.basename(tk_dir)}',
-                  '--include-data-file=myfont.otf=app/myfont.otf',
+                  f'--tcl-library-dir={tcl_dir}',
+                  f'--tk-library-dir={tk_dir}',
+                  f'--include-data-dir={tcl_dir}={os.path.basename(tcl_dir)}',
+                  f'--include-data-dir={tk_dir}={os.path.basename(tk_dir)}',
+                  '--include-data-file=myfont.otf=myfont.otf',
                   '--output-dir=dist',
                   '--assume-yes-for-downloads',
                   'app/DownloadLog.py'
@@ -92,13 +95,12 @@ jobs:
               result = subprocess.run(cmd, capture_output=True, text=True)
               
               if result.returncode != 0:
-                  print("❌ ERROR: Nuitka build failed!")
-                  print("\n--- STDOUT ---\n", result.stdout)
-                  print("\n--- STDERR ---\n", result.stderr)
+                  print("❌ FATAL: Nuitka build failed!")
+                  print("\n--- STDOUT ---", result.stdout, sep='\n')
+                  print("\n--- STDERR ---", result.stderr, sep='\n')
                   sys.exit(1)
               
               print("✅ Nuitka build successful!")
-              print("\n--- STDOUT ---\n", result.stdout)
               print("\n--- Files in dist directory ---")
               os.system('ls -lha dist/')
           
@@ -106,87 +108,100 @@ jobs:
               main()
           BUILD_SCRIPT
 
-      - name: Create Corrected Dockerfile
+      - name: Create Multi-Stage Dockerfile
         id: create_dockerfile
         run: |
-          cat > Dockerfile.corrected << 'EOF'
-          # Stage 1: Build Python
+          # This step generates the Dockerfile dynamically in the workflow runner.
+          # This approach keeps the entire build logic self-contained in the workflow file.
+          cat > Dockerfile.build << 'EOF'
+          # Stage 1: Build Python 3.13.2 from source
           FROM ubuntu:20.04 AS python-builder
+          LABEL stage=python-builder
           ENV DEBIAN_FRONTEND=noninteractive
-          RUN apt-get update && apt-get install -y \
+          RUN apt-get update && apt-get install -y --no-install-recommends \
               build-essential wget curl libssl-dev zlib1g-dev libncurses5-dev \
               libreadline-dev libsqlite3-dev libffi-dev tk-dev tcl-dev \
               && rm -rf /var/lib/apt/lists/*
           WORKDIR /tmp
           RUN wget https://www.python.org/ftp/python/3.13.2/Python-3.13.2.tgz \
-              && tar -xzf Python-3.13.2.tgz \
-              && cd Python-3.13.2 \
-              && ./configure --prefix=/usr/local --enable-optimizations \
+              && tar -xzf Python-3.13.2.tgz
+          WORKDIR /tmp/Python-3.13.2
+          # Suppress specific GCC warning that is benign in Python's source
+          RUN CFLAGS="-Wno-stringop-truncation" ./configure --prefix=/usr/local --enable-optimizations \
               && make -j$(nproc) \
               && make altinstall
 
-          # Stage 2: Build the application
+          # Stage 2: Build the application using Nuitka
           FROM ubuntu:20.04 AS app-builder
+          LABEL stage=app-builder
           ENV DEBIAN_FRONTEND=noninteractive
-          RUN apt-get update && apt-get install -y \
-              python3-tk tcl8.6 tk8.6 blt libsqlite3-0 libssl1.1 \
+          # Install patchelf, a required Nuitka dependency for standalone mode on Linux
+          RUN apt-get update && apt-get install -y --no-install-recommends \
+              python3-tk tcl8.6 tk8.6 blt libsqlite3-0 libssl1.1 patchelf \
               && rm -rf /var/lib/apt/lists/*
           
+          # Copy the custom-built Python from the previous stage
           COPY --from=python-builder /usr/local /usr/local
           
           WORKDIR /app
-          COPY requirements.txt app/ app/myfont.otf ./
+          # Copy source code, requirements, and the build script
+          COPY requirements.txt ./
+          COPY app ./app/
+          # Copy font and build script to the WORKDIR root (/app)
+          COPY app/myfont.otf ./myfont.otf
+          COPY build_app.py ./build_app.py
           
-          # Copy the build script into the image
-          COPY build_app.py .
-          
-          # Install dependencies
-          RUN /usr/local/bin/python3.13 -m pip install --upgrade pip \
-              && /usr/local/bin/python3.13 -m pip install -r requirements.txt \
-              && /usr/local/bin/python3.13 -m pip install nuitka
+          # Install dependencies and Nuitka
+          RUN /usr/local/bin/python3.13 -m pip install --no-cache-dir --upgrade pip \
+              && /usr/local/bin/python3.13 -m pip install --no-cache-dir -r requirements.txt \
+              && /usr/local/bin/python3.13 -m pip install --no-cache-dir nuitka
               
-          # Execute the build script
+          # Execute the build script to compile the application
           RUN /usr/local/bin/python3.13 build_app.py
 
-          # Stage 3: Final runtime image
+          # Stage 3: Create the final, minimal runtime image
           FROM ubuntu:20.04
+          LABEL stage=final-runtime
           ENV DEBIAN_FRONTEND=noninteractive
-          RUN apt-get update && apt-get install -y \
+          RUN apt-get update && apt-get install -y --no-install-recommends \
               tcl8.6 tk8.6 libsqlite3-0 libssl1.1 \
               && rm -rf /var/lib/apt/lists/*
           
           WORKDIR /app
+          # Copy only the compiled binary from the app-builder stage
           COPY --from=app-builder /app/dist/DownloadLog.bin .
           RUN chmod +x DownloadLog.bin
+          
+          # Set the entrypoint for the container
           CMD ["./DownloadLog.bin"]
           EOF
 
-      - name: Build Docker Image
+      - name: Build Docker Image for ARM64
         run: |
           docker buildx build \
             --platform linux/arm64 \
             --load \
-            -f Dockerfile.corrected \
-            -t python313-builder:latest \
+            -f Dockerfile.build \
+            -t py-app-builder:latest \
             .
 
-      - name: Extract Binary from Image
+      - name: Extract Binary from Docker Image
         run: |
-          mkdir -p dist_final
+          mkdir -p final_binary
           docker run --rm \
-            -v "$(pwd)/dist_final":/output \
-            python313-builder:latest \
+            -v "$(pwd)/final_binary":/output \
+            py-app-builder:latest \
             cp /app/DownloadLog.bin /output/
 
       - name: Verify Final Binary
         run: |
           echo "--- Verifying final artifact ---"
-          if [ -f dist_final/DownloadLog.bin ]; then
-            file dist_final/DownloadLog.bin
-            ls -lh dist_final/DownloadLog.bin
+          if [ -f final_binary/DownloadLog.bin ]; then
             echo "✅ Binary successfully extracted!"
+            file final_binary/DownloadLog.bin
+            ls -lh final_binary/DownloadLog.bin
           else
-            echo "❌ ERROR: Binary not found after build!"
+            echo "❌ FATAL: Binary not found after build!"
             exit 1
           fi
 
@@ -194,5 +209,5 @@ jobs:
         if: success()
         uses: actions/upload-artifact@v4
         with:
-          name: app-binary-ubuntu-arm64
-          path: dist_final/DownloadLog.bin
+          name: DownloadLog-ubuntu-arm64
+          path: final_binary/DownloadLog.bin
