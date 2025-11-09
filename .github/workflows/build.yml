@@ -1,4 +1,4 @@
-name: Build Python 3.13.2 ARM64 - Fixed Version
+name: Fixed Python 3.13.2 ARM64 Build
 
 on:
   push:
@@ -6,8 +6,8 @@ on:
   workflow_dispatch:
 
 jobs:
-  build-python313-fixed:
-    name: Build Python 3.13.2 ARM64
+  build-python313-corrected:
+    name: Build Python 3.13.2 ARM64 - Corrected
     runs-on: ubuntu-latest
     timeout-minutes: 180
     
@@ -20,18 +20,17 @@ jobs:
         with:
           platforms: arm64
 
-      - name: Create Fixed Dockerfile
+      - name: Create Corrected Dockerfile
         run: |
-          cat > Dockerfile.python313-fixed << 'EOF'
+          cat > Dockerfile.python313-corrected << 'EOF'
           # 第一阶段：构建 Python 3.13.2
-          FROM --platform=linux/arm64 ubuntu:20.04 AS python-builder
-
+          FROM ubuntu:20.04 AS python-builder
+          
           # 设置环境变量
           ENV DEBIAN_FRONTEND=noninteractive
           ENV PYTHONUNBUFFERED=1
-          ENV TZ=UTC
-
-          # 更新系统并安装构建依赖
+          
+          # 安装构建依赖
           RUN apt-get update && apt-get install -y \
               build-essential \
               wget \
@@ -52,12 +51,12 @@ jobs:
               uuid-dev \
               tk-dev \
               tcl-dev \
-              tcl \
-              tk \
-              blt-dev \
+              tcl8.6 \
+              tk8.6 \
+              blt \
               ca-certificates \
               && rm -rf /var/lib/apt/lists/*
-
+          
           # 下载并编译 Python 3.13.2
           WORKDIR /tmp
           RUN wget https://www.python.org/ftp/python/3.13.2/Python-3.13.2.tgz \
@@ -68,23 +67,18 @@ jobs:
                   --enable-optimizations \
                   --enable-loadable-sqlite-extensions \
                   --with-ensurepip=install \
-                  --build=aarch64-linux-gnu \
-                  --host=aarch64-linux-gnu \
               && make -j$(nproc) \
               && make altinstall
-
+          
           # 验证 Python 安装
           RUN /usr/local/bin/python3.13 --version \
-              && /usr/local/bin/python3.13 -m ensurepip --upgrade \
-              && /usr/local/bin/python3.13 -c "import sys; print('Python path:', sys.executable)"
-
+              && /usr/local/bin/python3.13 -m ensurepip --upgrade
+          
           # 第二阶段：构建应用
-          FROM --platform=linux/arm64 ubuntu:20.04 AS app-builder
-
-          # 设置环境变量
+          FROM ubuntu:20.04 AS app-builder
+          
           ENV DEBIAN_FRONTEND=noninteractive
-          ENV TZ=UTC
-
+          
           # 安装运行时和构建依赖
           RUN apt-get update && apt-get install -y \
               python3 \
@@ -93,142 +87,131 @@ jobs:
               tk8.6 \
               blt \
               libsqlite3-0 \
+              libssl1.1 \
               build-essential \
               wget \
               curl \
               && rm -rf /var/lib/apt/lists/*
-
+          
           # 复制编译好的 Python 3.13.2
           COPY --from=python-builder /usr/local /usr/local
-
-          # 设置工作目录
+          
           WORKDIR /app
-
+          
           # 复制项目文件
           COPY requirements.txt ./
           COPY app/ ./app/
           COPY app/myfont.otf ./
-
+          
           # 安装项目依赖
           RUN /usr/local/bin/python3.13 -m pip install --upgrade pip \
               && /usr/local/bin/python3.13 -m pip install -r requirements.txt \
               && /usr/local/bin/python3.13 -m pip install nuitka
-
-          # 查找并设置 Tcl/Tk 路径（修复方法）
-          RUN echo "Finding Tcl/Tk paths..." \
-              && TCL_DIR=$(find /usr -name 'tcl8.*' -type d | head -1) \
-              && TK_DIR=$(find /usr -name 'tk8.*' -type d | head -1) \
-              && echo "TCL_DIR=$TCL_DIR" > /tmp/build_config.sh \
-              && echo "TK_DIR=$TK_DIR" >> /tmp/build_config.sh \
-              && echo "TCL_BASE=$(basename $TCL_DIR)" >> /tmp/build_config.sh \
-              && echo "TK_BASE=$(basename $TK_DIR)" >> /tmp/build_config.sh \
-              && cat /tmp/build_config.sh
-
-          # 构建应用（使用环境变量）
-          RUN source /tmp/build_config.sh \
-              && echo "Using TCL_DIR: $TCL_DIR" \
-              && echo "Using TK_DIR: $TK_DIR" \
-              && /usr/local/bin/python3.13 -m nuitka \
-                  --onefile \
-                  --standalone \
-                  --enable-plugin=tk-inter \
-                  --tcl-library-dir="$TCL_DIR" \
-                  --tk-library-dir="$TK_DIR" \
-                  --include-data-dir="$TCL_DIR=$TCL_BASE" \
-                  --include-data-dir="$TK_DIR=$TK_BASE" \
-                  --include-data-file="myfont.otf=myfont.otf" \
-                  --output-dir="dist" \
-                  --assume-yes-for-downloads \
-                  --show-progress \
-                  --show-modules \
-                  app/DownloadLog.py
-
+          
+          # 查找 Tcl/Tk 路径并构建应用
+          RUN /usr/local/bin/python3.13 -c "
+          import os
+          import subprocess
+          
+          # 查找 Tcl/Tk 路径
+          tcl_dirs = []
+          tk_dirs = []
+          
+          for root, dirs, files in os.walk('/usr'):
+              for d in dirs:
+                  if d.startswith('tcl8.') and 'tcl8.6' in root:
+                      tcl_dirs.append(os.path.join(root, d))
+                  elif d.startswith('tk8.') and 'tk8.6' in root:
+                      tk_dirs.append(os.path.join(root, d))
+          
+          tcl_dir = tcl_dirs[0] if tcl_dirs else '/usr/lib/tcl8.6'
+          tk_dir = tk_dirs[0] if tk_dirs else '/usr/lib/tk8.6'
+          
+          print(f'TCL_DIR: {tcl_dir}')
+          print(f'TK_DIR: {tk_dir}')
+          
+          # 构建 Nuitka 命令
+          cmd = [
+              '/usr/local/bin/python3.13', '-m', 'nuitka',
+              '--onefile',
+              '--standalone',
+              '--enable-plugin=tk-inter',
+              '--tcl-library-dir', tcl_dir,
+              '--tk-library-dir', tk_dir,
+              '--include-data-dir', f'{tcl_dir}={os.path.basename(tcl_dir)}',
+              '--include-data-dir', f'{tk_dir}={os.path.basename(tk_dir)}',
+              '--include-data-file', 'myfont.otf=myfont.otf',
+              '--output-dir', 'dist',
+              '--assume-yes-for-downloads',
+              'app/DownloadLog.py'
+          ]
+          
+          print('Running Nuitka command...')
+          print(' '.join(cmd))
+          subprocess.run(cmd, check=True)
+          "
+          
           # 验证构建结果
-          RUN echo "=== Build Verification ===" \
-              && file dist/*.bin \
-              && ls -la dist/ \
-              && echo "=== Binary Information ===" \
-              && readelf -h dist/*.bin | head -10
-
-          # 创建最终输出目录
-          RUN mkdir -p /output \
-              && cp dist/*.bin /output/ \
-              && cp myfont.otf /output/ 2>/dev/null || true
-
-          # 第三阶段：运行时镜像（可选）
-          FROM --platform=linux/arm64 ubuntu:20.04 AS runtime
-
+          RUN file dist/*.bin && ls -la dist/
+          
+          # 创建输出目录
+          RUN mkdir -p /output && cp dist/*.bin /output/
+          
+          # 第三阶段：运行时镜像
+          FROM ubuntu:20.04 AS runtime
+          
           ENV DEBIAN_FRONTEND=noninteractive
-
-          # 安装最小运行时依赖
+          
+          # 安装运行时依赖（修复包名）
           RUN apt-get update && apt-get install -y \
               tcl8.6 \
               tk8.6 \
               blt \
               libsqlite3-0 \
               libssl1.1 \
-              libcrypto1.1 \
               && rm -rf /var/lib/apt/lists/*
-
+          
           WORKDIR /app
-
-          # 复制构建好的二进制文件
+          
+          # 复制二进制文件
           COPY --from=app-builder /output/ ./
-
-          # 设置权限
+          
           RUN chmod +x *.bin
-
-          # 设置默认命令
+          
           CMD ["./DownloadLog.bin"]
           EOF
 
-      - name: Build Docker Image (Fixed)
+      - name: Build Docker Image
         run: |
           docker buildx build \
             --platform linux/arm64 \
             --load \
-            -f Dockerfile.python313-fixed \
-            -t python313-arm64-builder \
+            -f Dockerfile.python313-corrected \
+            -t python313-arm64-fixed \
             .
-
-      - name: Test Build in Container
-        run: |
-          # 测试构建的容器
-          docker run --rm python313-arm64-builder \
-            ls -la /app/ || true
 
       - name: Extract Binary
         run: |
-          # 创建输出目录
-          mkdir -p dist_ubuntu20.04_arm64_py313_final
-          
-          # 从构建阶段提取二进制文件
+          mkdir -p dist_final
           docker run --rm \
-            -v "$(pwd)/dist_ubuntu20.04_arm64_py313_final":/output \
-            python313-arm64-builder \
-            sh -c "cp /app/*.bin /output/ 2>/dev/null || cp /app/dist/*.bin /output/ 2>/dev/null || true"
+            -v "$(pwd)/dist_final":/host_output \
+            python313-arm64-fixed \
+            sh -c "cp /app/*.bin /host_output/ 2>/dev/null || cp /output/*.bin /host_output/ 2>/dev/null || true"
 
       - name: Verify Binary
         run: |
-          echo "=== Final Binary Verification ==="
-          if [ -f dist_ubuntu20.04_arm64_py313_final/*.bin ]; then
-            file dist_ubuntu20.04_arm64_py313_final/*.bin
-            ls -lh dist_ubuntu20.04_arm64_py313_final/*.bin
+          echo "=== Final Verification ==="
+          if [ -f dist_final/*.bin ]; then
+            file dist_final/*.bin
+            ls -lh dist_final/*.bin
           else
-            echo "No binary file found in output directory"
-            ls -la dist_ubuntu20.04_arm64_py313_final/
+            echo "No binary found"
+            ls -la dist_final/
           fi
 
-      - name: Debug Build Issues
-        if: failure()
-        run: |
-          echo "=== Debugging Build Issues ==="
-          docker run --rm python313-arm64-builder \
-            sh -c "find /app -name '*.bin' -o -name 'DownloadLog*' 2>/dev/null || echo 'No binaries found'"
-
-      - name: Upload ARM64 Binary
+      - name: Upload Binary
         if: success()
         uses: actions/upload-artifact@v4
         with:
-          name: app-ubuntu20.04_arm64_python313_final
-          path: dist_ubuntu20.04_arm64_py313_final/*
+          name: app-ubuntu20.04_arm64_python313_corrected
+          path: dist_final/*
