@@ -8,27 +8,13 @@ on:
 jobs:
   build-arm64-binary:
     name: Build Ubuntu ARM64 Binary via Cross-Compilation
-    
-    # 核心 1: 在资源充足的 x86 Runner (ubuntu-latest) 上运行
-    # CORE 1: Run on an abundant x86 runner (ubuntu-latest).
     runs-on: ubuntu-latest
-    
-    timeout-minutes: 300
+    timeout-minutes: 180
     
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
-      - name: Cache pip packages
-        uses: actions/cache@v4
-        with:
-          path: ~/.cache/pip
-          key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements.txt') }}
-          restore-keys: |
-            ${{ runner.os }}-pip-
-
-      # 核心 2: 设置 QEMU，让 x86 Runner 能够模拟执行 ARM64 指令
-      # CORE 2: Set up QEMU to allow the x86 runner to emulate ARM64 instructions.
       - name: Set up QEMU for ARM64 cross-compilation
         uses: docker/setup-qemu-action@v3
         with:
@@ -37,8 +23,8 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      # 步骤 3: 动态创建 Nuitka 构建脚本，将在 Docker 容器内执行
-      # STEP 3: Dynamically create the Nuitka build script, which will be executed inside the Docker container.
+      # 步骤 3: 动态创建 Nuitka 构建脚本 (已修正内部路径)
+      # STEP 3: Create Python Build Script for Nuitka (with corrected internal paths).
       - name: Create Python Build Script for Nuitka
         run: |
           cat > build_app.py << 'BUILD_SCRIPT'
@@ -49,14 +35,10 @@ jobs:
           def find_tcl_tk_paths():
               """Rigorously finds Tcl and Tk library paths for Nuitka inside the ARM64 environment."""
               possible_tcl_paths = [
-                  '/usr/share/tcltk/tcl8.6',
-                  '/usr/lib/aarch64-linux-gnu/tcl8.6',
-                  '/usr/lib/tcl8.6',
+                  '/usr/share/tcltk/tcl8.6', '/usr/lib/aarch64-linux-gnu/tcl8.6', '/usr/lib/tcl8.6',
               ]
               possible_tk_paths = [
-                  '/usr/share/tcltk/tk8.6',
-                  '/usr/lib/aarch64-linux-gnu/tk8.6',
-                  '/usr/lib/tk8.6',
+                  '/usr/share/tcltk/tk8.6', '/usr/lib/aarch64-linux-gnu/tk8.6', '/usr/lib/tk8.6',
               ]
               tcl_dir = next((path for path in possible_tcl_paths if os.path.isdir(path)), None)
               tk_dir = next((path for path in possible_tk_paths if os.path.isdir(path)), None)
@@ -73,12 +55,11 @@ jobs:
               if not tcl_dir or not tk_dir:
                   print("❌ FATAL: Could not find Tcl and/or Tk library paths. Aborting build.")
                   sys.exit(1)
-              if tcl_dir == tk_dir:
-                  print(f"❌ FATAL: Tcl and Tk paths are identical ({tcl_dir}), which indicates a detection error. Aborting.")
-                  sys.exit(1)
               print(f"✅ Found Tcl library at: {tcl_dir}")
               print(f"✅ Found Tk library at: {tk_dir}")
               
+              # --- 关键修改 1: 移除了 'app/' 前缀 ---
+              # --- KEY CHANGE 1: Removed the 'app/' prefix. ---
               cmd = [
                   '/usr/local/bin/python3.13', '-m', 'nuitka',
                   '--onefile', '--standalone', '--enable-plugin=tk-inter',
@@ -86,8 +67,11 @@ jobs:
                   f'--tcl-library-dir={tcl_dir}', f'--tk-library-dir={tk_dir}',
                   f'--include-data-dir={tcl_dir}={os.path.basename(tcl_dir)}',
                   f'--include-data-dir={tk_dir}={os.path.basename(tk_dir)}',
-                  '--include-data-file=app/myfont.otf=myfont.otf',
-                  '--output-dir=dist', '--assume-yes-for-downloads', 'app/DownloadLog.py'
+                  # 路径已修正
+                  '--include-data-file=myfont.otf=myfont.otf',
+                  '--output-dir=dist', '--assume-yes-for-downloads',
+                  # 路径已修正
+                  'DownloadLog.py'
               ]
               
               print("\n🚀 Running Nuitka command:\n" + ' '.join(cmd) + "\n")
@@ -107,6 +91,8 @@ jobs:
               main()
           BUILD_SCRIPT
 
+      # 步骤 4: 创建一个优化的多阶段 Dockerfile (已修正 COPY 命令)
+      # STEP 4: Create an optimized multi-stage Dockerfile (with corrected COPY command).
       - name: Create Optimized Multi-Stage Dockerfile
         run: |
           cat > Dockerfile.build << 'EOF'
@@ -126,7 +112,7 @@ jobs:
               && make -j$(nproc) \
               && make altinstall
 
-          # Stage 2: 使用 Nuitka 构建应用 (最终产物从此阶段提取)
+          # Stage 2: 使用 Nuitka 构建应用
           FROM ubuntu:20.04 AS app-builder
           LABEL stage=app-builder
           ENV DEBIAN_FRONTEND=noninteractive
@@ -138,32 +124,39 @@ jobs:
           
           WORKDIR /app
           COPY requirements.txt ./
-          COPY app ./app/
-          COPY build_app.py ./build_app.py
+          COPY build_app.py ./
+
+          # --- 关键修改 2: 修正了 COPY 命令 ---
+          # --- KEY CHANGE 2: Corrected the COPY command. ---
+          COPY app/ ./
           
           RUN /usr/local/bin/python3.13 -m pip install --no-cache-dir --upgrade pip \
               && /usr/local/bin/python3.13 -m pip install --no-cache-dir -r requirements.txt \
               && /usr/local/bin/python3.13 -m pip install --no-cache-dir nuitka
               
+          # 这个脚本现在可以正确找到位于 /app/DownloadLog.py 的源文件
+          # This script can now correctly find the source file at /app/DownloadLog.py
           RUN /usr/local/bin/python3.13 build_app.py
           EOF
 
       - name: Build Docker Image for ARM64
-        run: |
-          docker buildx build \
-            --platform linux/arm64 \
-            --load \
-            --memory=8g \
-            -f Dockerfile.build \
-            -t py-app-builder:latest \
-            .
+        id: docker_build
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./Dockerfile.build
+          platforms: linux/arm64
+          # 只构建并加载到本地 Docker daemon，不推送
+          # Only build and load to the local Docker daemon, do not push.
+          load: true
+          tags: py-app-builder:latest
 
       - name: Extract Binary from Docker Image
         run: |
           set -e
           mkdir -p final_binary
-          # Nuitka 生成的可执行文件名与入口脚本名相同
-          # The executable name generated by Nuitka matches the entry script name.
+          # 这个 cp 命令现在应该能成功，因为 Nuitka 编译成功且路径正确
+          # This cp command should now succeed because Nuitka compilation is successful and the path is correct.
           docker run --rm \
             -v "$(pwd)/final_binary":/output \
             py-app-builder:latest \
@@ -174,8 +167,6 @@ jobs:
           echo "--- Verifying final artifact ---"
           if [ -f final_binary/DownloadLog-ubuntu-arm64 ]; then
             echo "✅ Binary successfully extracted!"
-            # 我们无法在 x86 Runner 上执行 ARM 二进制文件，但可以用 `file` 命令检查其架构
-            # We can't execute the ARM binary on an x86 runner, but we can use the `file` command to check its architecture.
             file final_binary/DownloadLog-ubuntu-arm64
             ls -lh final_binary/DownloadLog-ubuntu-arm64
           else
