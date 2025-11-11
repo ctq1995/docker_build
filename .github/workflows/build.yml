@@ -8,7 +8,7 @@ on:
 jobs:
   build-arm64-binary:
     name: Build Ubuntu ARM64 Binary
-    runs-on: ubuntu-latest-4-cores
+    runs-on: ubuntu-latest
     
     # Increase timeout as Nuitka compilation can be slow, especially with --low-memory
     timeout-minutes: 180
@@ -179,7 +179,7 @@ jobs:
           docker buildx build \
             --platform linux/arm64 \
             --load \
-            --memory=4g \
+            --memory=8g \
             -f Dockerfile.build \
             -t py-app-builder:latest \
             .
@@ -215,4 +215,4 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: DownloadLog-ubuntu-arm64-py313
-          path: final_binary/DownloadLog.bin
+          path: final_binary/DownloadLog
