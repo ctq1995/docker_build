@@ -1,4 +1,4 @@
-name: Build Python ARM64 Binary (No Docker, Native ARM)
+name: Build Python ARM64 Binary (Cross-Compilation)
 
 on:
   push:
@@ -7,116 +7,179 @@ on:
 
 jobs:
   build-arm64-binary:
-    name: Build Ubuntu ARM64 Binary on Native Runner
+    name: Build Ubuntu ARM64 Binary via Cross-Compilation
     
-    # 核心优化 1: 使用原生 ARM64 Runner
-    # CORE OPTIMIZATION 1: Use a native ARM64 runner.
-    runs-on: ubuntu-latest-arm64
+    # 核心 1: 在资源充足的 x86 Runner (ubuntu-latest) 上运行
+    # CORE 1: Run on an abundant x86 runner (ubuntu-latest).
+    runs-on: ubuntu-latest
     
-    # 由于没有 Docker 开销，整体时间会快很多
-    timeout-minutes: 60
+    timeout-minutes: 300
     
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
-      - name: Install System Dependencies
-        run: |
-          sudo apt-get update
-          # 安装编译 Python 和应用所需的系统库
-          # Install system libraries required for compiling Python and the application.
-          sudo apt-get install -y --no-install-commends \
-            build-essential wget curl libssl-dev zlib1g-dev libncurses5-dev \
-            libreadline-dev libsqlite3-dev libffi-dev tk-dev tcl-dev ca-certificates patchelf
-
-      - name: Build and Install Python 3.13 from Source
-        run: |
-          # 因为 Runner 自带的 Python 版本可能不满足要求，我们从源码编译安装
-          # Since the runner's default Python might not meet requirements, we compile and install from source.
-          wget https://www.python.org/ftp/python/3.13.2/Python-3.13.2.tgz
-          tar -xzf Python-3.13.2.tgz
-          cd Python-3.13.2
-          # CFLAGS 用于处理特定警告，--enable-optimizations 会使编译变慢但运行性能更好
-          # CFLAGS handles specific warnings; --enable-optimizations slows compilation but improves runtime performance.
-          CFLAGS="-Wno-stringop-truncation" ./configure --prefix=/usr/local --enable-optimizations
-          make -j$(nproc)
-          sudo make altinstall
-          # 验证安装成功
-          # Verify the installation.
-          /usr/local/bin/python3.13 --version
-
-      - name: Cache and Install Python Dependencies
+      - name: Cache pip packages
         uses: actions/cache@v4
         with:
           path: ~/.cache/pip
           key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements.txt') }}
           restore-keys: |
             ${{ runner.os }}-pip-
-        # 使用新安装的 Python 来安装 Nuitka 和其他依赖
-        # Use the newly installed Python to install Nuitka and other dependencies.
-      - run: |
-          /usr/local/bin/python3.13 -m pip install --upgrade pip
-          /usr/local/bin/python3.13 -m pip install nuitka -r requirements.txt
 
-      - name: Locate Tcl/Tk Libraries and Run Nuitka
-        id: nuitka_build
+      # 核心 2: 设置 QEMU，让 x86 Runner 能够模拟执行 ARM64 指令
+      # CORE 2: Set up QEMU to allow the x86 runner to emulate ARM64 instructions.
+      - name: Set up QEMU for ARM64 cross-compilation
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # 步骤 3: 动态创建 Nuitka 构建脚本，将在 Docker 容器内执行
+      # STEP 3: Dynamically create the Nuitka build script, which will be executed inside the Docker container.
+      - name: Create Python Build Script for Nuitka
         run: |
-          # 核心优化 2: 使用 Shell 脚本替代 Python 脚本来查找 Tcl/Tk 路径
-          # CORE OPTIMIZATION 2: Use a shell script instead of a Python script to find Tcl/Tk paths.
-          TCL_DIR=""
-          TK_DIR=""
-          POSSIBLE_PATHS=("/usr/share/tcltk" "/usr/lib/aarch64-linux-gnu" "/usr/lib")
+          cat > build_app.py << 'BUILD_SCRIPT'
+          import os
+          import subprocess
+          import sys
           
-          echo "Searching for Tcl/Tk 8.6 libraries..."
-          for path in "${POSSIBLE_PATHS[@]}"; do
-            if [ -d "${path}/tcl8.6" ] && [ -z "$TCL_DIR" ]; then
-              TCL_DIR="${path}/tcl8.6"
-              echo "Found Tcl library at: $TCL_DIR"
-            fi
-            if [ -d "${path}/tk8.6" ] && [ -z "$TK_DIR" ]; then
-              TK_DIR="${path}/tk8.6"
-              echo "Found Tk library at: $TK_DIR"
-            fi
-          done
+          def find_tcl_tk_paths():
+              """Rigorously finds Tcl and Tk library paths for Nuitka inside the ARM64 environment."""
+              possible_tcl_paths = [
+                  '/usr/share/tcltk/tcl8.6',
+                  '/usr/lib/aarch64-linux-gnu/tcl8.6',
+                  '/usr/lib/tcl8.6',
+              ]
+              possible_tk_paths = [
+                  '/usr/share/tcltk/tk8.6',
+                  '/usr/lib/aarch64-linux-gnu/tk8.6',
+                  '/usr/lib/tk8.6',
+              ]
+              tcl_dir = next((path for path in possible_tcl_paths if os.path.isdir(path)), None)
+              tk_dir = next((path for path in possible_tk_paths if os.path.isdir(path)), None)
+              if not tcl_dir or not tk_dir:
+                  print("Standard paths not found, attempting filesystem fallback search...")
+                  for root, dirs, _ in os.walk('/usr'):
+                      if not tcl_dir and 'tcl8.6' in dirs: tcl_dir = os.path.join(root, 'tcl8.6')
+                      if not tk_dir and 'tk8.6' in dirs: tk_dir = os.path.join(root, 'tk8.6')
+              return tcl_dir, tk_dir
+          
+          def main():
+              print("=== Starting Python Application Build using Nuitka (for ARM64) ===")
+              tcl_dir, tk_dir = find_tcl_tk_paths()
+              if not tcl_dir or not tk_dir:
+                  print("❌ FATAL: Could not find Tcl and/or Tk library paths. Aborting build.")
+                  sys.exit(1)
+              if tcl_dir == tk_dir:
+                  print(f"❌ FATAL: Tcl and Tk paths are identical ({tcl_dir}), which indicates a detection error. Aborting.")
+                  sys.exit(1)
+              print(f"✅ Found Tcl library at: {tcl_dir}")
+              print(f"✅ Found Tk library at: {tk_dir}")
+              
+              cmd = [
+                  '/usr/local/bin/python3.13', '-m', 'nuitka',
+                  '--onefile', '--standalone', '--enable-plugin=tk-inter',
+                  '--low-memory',
+                  f'--tcl-library-dir={tcl_dir}', f'--tk-library-dir={tk_dir}',
+                  f'--include-data-dir={tcl_dir}={os.path.basename(tcl_dir)}',
+                  f'--include-data-dir={tk_dir}={os.path.basename(tk_dir)}',
+                  '--include-data-file=app/myfont.otf=myfont.otf',
+                  '--output-dir=dist', '--assume-yes-for-downloads', 'app/DownloadLog.py'
+              ]
+              
+              print("\n🚀 Running Nuitka command:\n" + ' '.join(cmd) + "\n")
+              try:
+                  result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+                  print("✅ Nuitka build successful!")
+                  print("\n--- STDOUT ---\n", result.stdout)
+                  print("\n--- Files in dist directory ---")
+                  os.system('ls -lha dist/')
+              except subprocess.CalledProcessError as e:
+                  print("❌ FATAL: Nuitka build failed!")
+                  print("\n--- STDOUT ---\n", e.stdout)
+                  print("\n--- STDERR ---\n", e.stderr)
+                  sys.exit(e.returncode)
+          
+          if __name__ == '__main__':
+              main()
+          BUILD_SCRIPT
 
-          if [ -z "$TCL_DIR" ] || [ -z "$TK_DIR" ]; then
-            echo "❌ FATAL: Could not find Tcl and/or Tk library paths. Aborting build."
-            exit 1
-          fi
-
-          # 核心优化 3: 直接在命令行中执行 Nuitka
-          # CORE OPTIMIZATION 3: Execute Nuitka directly from the command line.
-          echo "🚀 Running Nuitka command..."
-          /usr/local/bin/python3.13 -m nuitka \
-            --onefile \
-            --standalone \
-            --enable-plugin=tk-inter \
-            --tcl-library-dir=${TCL_DIR} \
-            --tk-library-dir=${TK_DIR} \
-            --include-data-dir=${TCL_DIR}=$(basename ${TCL_DIR}) \
-            --include-data-dir=${TK_DIR}=$(basename ${TK_DIR}) \
-            --include-data-file=app/myfont.otf=myfont.otf \
-            --output-dir=dist \
-            --assume-yes-for-downloads \
-            app/DownloadLog.py
-
-      - name: Prepare and Verify Artifact
+      - name: Create Optimized Multi-Stage Dockerfile
         run: |
-          echo "--- Preparing and verifying final artifact ---"
+          cat > Dockerfile.build << 'EOF'
+          # Stage 1: 从源码编译 Python 3.13.2
+          FROM ubuntu:20.04 AS python-builder
+          LABEL stage=python-builder
+          ENV DEBIAN_FRONTEND=noninteractive
+          RUN apt-get update && apt-get install -y --no-install-recommends \
+              build-essential wget curl libssl-dev zlib1g-dev libncurses5-dev \
+              libreadline-dev libsqlite3-dev libffi-dev tk-dev tcl-dev ca-certificates \
+              && rm -rf /var/lib/apt/lists/*
+          WORKDIR /tmp
+          RUN wget https://www.python.org/ftp/python/3.13.2/Python-3.13.2.tgz \
+              && tar -xzf Python-3.13.2.tgz
+          WORKDIR /tmp/Python-3.13.2
+          RUN CFLAGS="-Wno-stringop-truncation" ./configure --prefix=/usr/local --enable-optimizations \
+              && make -j$(nproc) \
+              && make altinstall
+
+          # Stage 2: 使用 Nuitka 构建应用 (最终产物从此阶段提取)
+          FROM ubuntu:20.04 AS app-builder
+          LABEL stage=app-builder
+          ENV DEBIAN_FRONTEND=noninteractive
+          RUN apt-get update && apt-get install -y --no-install-recommends \
+              build-essential tk-dev tcl-dev blt libsqlite3-0 libssl1.1 patchelf \
+              && rm -rf /var/lib/apt/lists/*
+          
+          COPY --from=python-builder /usr/local /usr/local
+          
+          WORKDIR /app
+          COPY requirements.txt ./
+          COPY app ./app/
+          COPY build_app.py ./build_app.py
+          
+          RUN /usr/local/bin/python3.13 -m pip install --no-cache-dir --upgrade pip \
+              && /usr/local/bin/python3.13 -m pip install --no-cache-dir -r requirements.txt \
+              && /usr/local/bin/python3.13 -m pip install --no-cache-dir nuitka
+              
+          RUN /usr/local/bin/python3.13 build_app.py
+          EOF
+
+      - name: Build Docker Image for ARM64
+        run: |
+          docker buildx build \
+            --platform linux/arm64 \
+            --load \
+            --memory=8g \
+            -f Dockerfile.build \
+            -t py-app-builder:latest \
+            .
+
+      - name: Extract Binary from Docker Image
+        run: |
+          set -e
+          mkdir -p final_binary
           # Nuitka 生成的可执行文件名与入口脚本名相同
           # The executable name generated by Nuitka matches the entry script name.
-          SOURCE_BINARY="dist/DownloadLog.py"
-          TARGET_BINARY="DownloadLog-ubuntu-arm64-py313"
-          
-          if [ -f "$SOURCE_BINARY" ]; then
-            mv "$SOURCE_BINARY" "$TARGET_BINARY"
-            echo "✅ Binary successfully created and renamed to $TARGET_BINARY"
-            file "$TARGET_BINARY"
-            ls -lh "$TARGET_BINARY"
+          docker run --rm \
+            -v "$(pwd)/final_binary":/output \
+            py-app-builder:latest \
+            cp /app/dist/DownloadLog.py /output/DownloadLog-ubuntu-arm64
+
+      - name: Verify Final Binary
+        run: |
+          echo "--- Verifying final artifact ---"
+          if [ -f final_binary/DownloadLog-ubuntu-arm64 ]; then
+            echo "✅ Binary successfully extracted!"
+            # 我们无法在 x86 Runner 上执行 ARM 二进制文件，但可以用 `file` 命令检查其架构
+            # We can't execute the ARM binary on an x86 runner, but we can use the `file` command to check its architecture.
+            file final_binary/DownloadLog-ubuntu-arm64
+            ls -lh final_binary/DownloadLog-ubuntu-arm64
           else
-            echo "❌ FATAL: Nuitka output binary not found at $SOURCE_BINARY!"
-            # 列出 dist 目录内容以帮助调试
-            ls -lha dist/
+            echo "❌ FATAL: Binary not found after build!"
             exit 1
           fi
 
@@ -125,4 +188,4 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: DownloadLog-ubuntu-arm64-py313
-          path: DownloadLog-ubuntu-arm64-py313
+          path: final_binary/DownloadLog-ubuntu-arm64
