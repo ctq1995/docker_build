@@ -54,7 +54,7 @@ jobs:
                   f'--include-data-dir={tcl_dir}={os.path.basename(tcl_dir)}',
                   f'--include-data-dir={tk_dir}={os.path.basename(tk_dir)}',
                   '--include-data-file=myfont.otf=myfont.otf',
-                  '--output-dir=dist', '--assume-yes-for-downloads',
+                  '--assume-yes-for-downloads',
                   'DownloadLog.py'
               ]
               
@@ -112,7 +112,7 @@ jobs:
           docker run --rm \
             -v "$(pwd)/final_binary":/output \
             py-app-builder:latest \
-            cp /app/dist/DownloadLog.py /output/DownloadLog-ubuntu-arm64
+            cp /app/DownloadLog.py /output/DownloadLog-ubuntu-arm64
 
       # --- 关键修改: 将验证和上传拆分为两个步骤 ---
       # --- KEY CHANGE: Split verification and upload into two steps. ---
