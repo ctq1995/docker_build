@@ -68,6 +68,8 @@ jobs:
                       raise subprocess.CalledProcessError(process.returncode, cmd)
                   
                   print("\n✅ Nuitka build successful!")
+                  print("\n--- Files in current directory ---")
+                  os.system('ls -lha')
                   print("\n--- Files in dist directory ---")
                   os.system('ls -lha dist/')
               except subprocess.CalledProcessError as e:
@@ -90,14 +92,18 @@ jobs:
           WORKDIR /app
           COPY requirements.txt ./
           COPY build_app.py ./
-          COPY app/ ./
+          COPY DownloadLog.py ./
+          COPY myfont.otf ./
           RUN python3.13 -m pip install --no-cache-dir --upgrade pip \
               && python3.13 -m pip install --no-cache-dir -r requirements.txt \
               && python3.13 -m pip install --no-cache-dir nuitka
           RUN python3.13 build_app.py
+          RUN echo "=== Final check of build artifacts ===" \
+              && ls -lha /app/ \
+              && ls -lha /app/dist/ || echo "No dist directory found"
           EOF
 
-      - name: Build Docker Image for ARM64 and Extract Binary
+      - name: Build Docker Image for ARM64
         run: |
           docker buildx build \
             --platform linux/arm64 \
@@ -106,25 +112,57 @@ jobs:
             -f Dockerfile.build \
             -t py-app-builder:latest \
             .
-            
+
+      - name: Debug - Check Build Output in Container
+        run: |
+          echo "=== Checking container file structure ==="
+          docker run --rm py-app-builder:latest sh -c "echo '--- /app directory ---' && ls -lha /app/ && echo '--- /app/dist directory ---' && ls -lha /app/dist/ 2>/dev/null || echo 'No dist directory found'"
+
+      - name: Extract Binary from Container
+        run: |
           set -e
           mkdir -p final_binary
+          
+          echo "=== Extracting binary from container ==="
+          # 尝试多种可能的文件名和路径
           docker run --rm \
             -v "$(pwd)/final_binary":/output \
             py-app-builder:latest \
-            cp /app/DownloadLog.py /output/DownloadLog-ubuntu-arm64
+            sh -c '
+              if [ -f /app/dist/DownloadLog.bin ]; then
+                echo "✅ Found /app/dist/DownloadLog.bin"
+                cp /app/dist/DownloadLog.bin /output/DownloadLog-ubuntu-arm64
+              elif [ -f /app/dist/DownloadLog ]; then
+                echo "✅ Found /app/dist/DownloadLog"
+                cp /app/dist/DownloadLog /output/DownloadLog-ubuntu-arm64
+              elif [ -f /app/DownloadLog.bin ]; then
+                echo "✅ Found /app/DownloadLog.bin"
+                cp /app/DownloadLog.bin /output/DownloadLog-ubuntu-arm64
+              elif [ -f /app/DownloadLog.dist/DownloadLog.bin ]; then
+                echo "✅ Found /app/DownloadLog.dist/DownloadLog.bin"
+                cp /app/DownloadLog.dist/DownloadLog.bin /output/DownloadLog-ubuntu-arm64
+              elif [ -f /app/DownloadLog.dist/DownloadLog ]; then
+                echo "✅ Found /app/DownloadLog.dist/DownloadLog"
+                cp /app/DownloadLog.dist/DownloadLog /output/DownloadLog-ubuntu-arm64
+              else
+                echo "❌ Could not find compiled binary! Listing all files:"
+                find /app -type f -name "*DownloadLog*" ! -name "*.py"
+                exit 1
+              fi
+            '
 
-      # --- 关键修改: 将验证和上传拆分为两个步骤 ---
-      # --- KEY CHANGE: Split verification and upload into two steps. ---
       - name: Verify Final Binary
         run: |
-          echo "--- Verifying final artifact ---"
+          echo "=== Verifying final artifact ==="
           if [ -f final_binary/DownloadLog-ubuntu-arm64 ]; then
             echo "✅ Binary successfully extracted!"
-            file final_binary/DownloadLog-ubuntu-arm64
             ls -lh final_binary/DownloadLog-ubuntu-arm64
+            file final_binary/DownloadLog-ubuntu-arm64
+            chmod +x final_binary/DownloadLog-ubuntu-arm64
           else
-            echo "❌ FATAL: Binary not found after build!"
+            echo "❌ FATAL: Binary not found after extraction!"
+            echo "Contents of final_binary directory:"
+            ls -lha final_binary/
             exit 1
           fi
 
