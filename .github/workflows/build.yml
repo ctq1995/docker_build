@@ -53,9 +53,9 @@ jobs:
                   f'--tcl-library-dir={tcl_dir}', f'--tk-library-dir={tk_dir}',
                   f'--include-data-dir={tcl_dir}={os.path.basename(tcl_dir)}',
                   f'--include-data-dir={tk_dir}={os.path.basename(tk_dir)}',
-                  '--include-data-file=myfont.otf=myfont.otf',
+                  '--include-data-file=app/myfont.otf=myfont.otf',
                   '--assume-yes-for-downloads',
-                  'DownloadLog.py'
+                  'app/DownloadLog.py'
               ]
               
               print("\n🚀 Running Nuitka command:\n" + ' '.join(cmd) + "\n")
@@ -71,7 +71,9 @@ jobs:
                   print("\n--- Files in current directory ---")
                   os.system('ls -lha')
                   print("\n--- Files in dist directory ---")
-                  os.system('ls -lha dist/')
+                  os.system('ls -lha dist/ 2>/dev/null || echo "No dist directory"')
+                  print("\n--- Looking for compiled binary ---")
+                  os.system('find . -type f -name "*DownloadLog*" ! -name "*.py" -exec ls -lh {} \;')
               except subprocess.CalledProcessError as e:
                   print(f"❌ FATAL: Nuitka build failed with exit code {e.returncode}!")
                   sys.exit(e.returncode)
@@ -89,18 +91,18 @@ jobs:
           RUN apt-get update && apt-get install -y --no-install-recommends \
               build-essential tk-dev tcl-dev blt libsqlite3-0 libssl-dev patchelf \
               && rm -rf /var/lib/apt/lists/*
-          WORKDIR /app
+          WORKDIR /build
           COPY requirements.txt ./
+          COPY app/ ./app/
           COPY build_app.py ./
-          COPY DownloadLog.py ./
-          COPY myfont.otf ./
           RUN python3.13 -m pip install --no-cache-dir --upgrade pip \
               && python3.13 -m pip install --no-cache-dir -r requirements.txt \
               && python3.13 -m pip install --no-cache-dir nuitka
           RUN python3.13 build_app.py
           RUN echo "=== Final check of build artifacts ===" \
-              && ls -lha /app/ \
-              && ls -lha /app/dist/ || echo "No dist directory found"
+              && ls -lha /build/ \
+              && echo "=== Searching for binary ===" \
+              && find /build -type f -name "*DownloadLog*" ! -name "*.py"
           EOF
 
       - name: Build Docker Image for ARM64
@@ -116,7 +118,12 @@ jobs:
       - name: Debug - Check Build Output in Container
         run: |
           echo "=== Checking container file structure ==="
-          docker run --rm py-app-builder:latest sh -c "echo '--- /app directory ---' && ls -lha /app/ && echo '--- /app/dist directory ---' && ls -lha /app/dist/ 2>/dev/null || echo 'No dist directory found'"
+          docker run --rm py-app-builder:latest sh -c "
+            echo '--- /build directory ---' && ls -lha /build/ && 
+            echo '--- /build/dist directory ---' && ls -lha /build/dist/ 2>/dev/null || echo 'No dist directory' &&
+            echo '--- Searching for all DownloadLog binaries ---' && 
+            find /build -type f -name '*DownloadLog*' ! -name '*.py' -exec ls -lh {} \;
+          "
 
       - name: Extract Binary from Container
         run: |
@@ -124,29 +131,22 @@ jobs:
           mkdir -p final_binary
           
           echo "=== Extracting binary from container ==="
-          # 尝试多种可能的文件名和路径
           docker run --rm \
             -v "$(pwd)/final_binary":/output \
             py-app-builder:latest \
             sh -c '
-              if [ -f /app/dist/DownloadLog.bin ]; then
-                echo "✅ Found /app/dist/DownloadLog.bin"
-                cp /app/dist/DownloadLog.bin /output/DownloadLog-ubuntu-arm64
-              elif [ -f /app/dist/DownloadLog ]; then
-                echo "✅ Found /app/dist/DownloadLog"
-                cp /app/dist/DownloadLog /output/DownloadLog-ubuntu-arm64
-              elif [ -f /app/DownloadLog.bin ]; then
-                echo "✅ Found /app/DownloadLog.bin"
-                cp /app/DownloadLog.bin /output/DownloadLog-ubuntu-arm64
-              elif [ -f /app/DownloadLog.dist/DownloadLog.bin ]; then
-                echo "✅ Found /app/DownloadLog.dist/DownloadLog.bin"
-                cp /app/DownloadLog.dist/DownloadLog.bin /output/DownloadLog-ubuntu-arm64
-              elif [ -f /app/DownloadLog.dist/DownloadLog ]; then
-                echo "✅ Found /app/DownloadLog.dist/DownloadLog"
-                cp /app/DownloadLog.dist/DownloadLog /output/DownloadLog-ubuntu-arm64
+              # 搜索所有可能的位置
+              BINARY_PATH=$(find /build -type f \( -name "DownloadLog.bin" -o -name "DownloadLog" \) ! -name "*.py" | head -n 1)
+              
+              if [ -n "$BINARY_PATH" ]; then
+                echo "✅ Found binary at: $BINARY_PATH"
+                ls -lh "$BINARY_PATH"
+                cp "$BINARY_PATH" /output/DownloadLog-ubuntu-arm64
+                echo "✅ Binary copied successfully"
               else
-                echo "❌ Could not find compiled binary! Listing all files:"
-                find /app -type f -name "*DownloadLog*" ! -name "*.py"
+                echo "❌ Could not find compiled binary!"
+                echo "All DownloadLog files found:"
+                find /build -name "*DownloadLog*"
                 exit 1
               fi
             '
@@ -157,8 +157,9 @@ jobs:
           if [ -f final_binary/DownloadLog-ubuntu-arm64 ]; then
             echo "✅ Binary successfully extracted!"
             ls -lh final_binary/DownloadLog-ubuntu-arm64
-            file final_binary/DownloadLog-ubuntu-arm64
+            file final_binary/DownloadLog-ubuntu-arm64 2>/dev/null || echo "file command not available"
             chmod +x final_binary/DownloadLog-ubuntu-arm64
+            echo "✅ Binary size: $(du -h final_binary/DownloadLog-ubuntu-arm64 | cut -f1)"
           else
             echo "❌ FATAL: Binary not found after extraction!"
             echo "Contents of final_binary directory:"
