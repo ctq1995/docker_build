@@ -125,7 +125,7 @@ jobs:
             find /build -type f -name '*DownloadLog*' ! -name '*.py' -exec ls -lh {} \;
           "
 
-      - name: Extract Binary from Container
+      - name: Extract and Prepare Binary for Upload
         run: |
           set -e
           mkdir -p final_binary
@@ -135,40 +135,25 @@ jobs:
             -v "$(pwd)/final_binary":/output \
             py-app-builder:latest \
             sh -c '
-              # 搜索所有可能的位置
-              BINARY_PATH=$(find /build -type f \( -name "DownloadLog.bin" -o -name "DownloadLog" \) ! -name "*.py" | head -n 1)
+              # Use 'find' to locate the binary, searching common Nuitka output locations
+              BINARY_PATH=$(find /build/dist -maxdepth 2 -type f -name "DownloadLog" -o -name "DownloadLog.bin" | head -n 1)
               
               if [ -n "$BINARY_PATH" ]; then
                 echo "✅ Found binary at: $BINARY_PATH"
                 ls -lh "$BINARY_PATH"
-                cp "$BINARY_PATH" /output/DownloadLog-ubuntu-arm64
-                echo "✅ Binary copied successfully"
+                # Use install to copy the binary with the correct executable permissions
+                install -m 755 "$BINARY_PATH" /output/DownloadLog-ubuntu-arm64
+                echo "✅ Binary copied to /output/DownloadLog-ubuntu-arm64"
               else
-                echo "❌ Could not find compiled binary!"
-                echo "All DownloadLog files found:"
-                find /build -name "*DownloadLog*"
+                echo "❌ FATAL: Could not find compiled binary in /build/dist!"
+                echo "All files in /build:"
+                find /build -type f -name "*DownloadLog*"
                 exit 1
               fi
             '
-
-      - name: Verify Final Binary
-        run: |
-          echo "=== Verifying final artifact ==="
-          if [ -f final_binary/DownloadLog-ubuntu-arm64 ]; then
-            echo "✅ Binary successfully extracted!"
-            ls -lh final_binary/DownloadLog-ubuntu-arm64
-            file final_binary/DownloadLog-ubuntu-arm64 2>/dev/null || echo "file command not available"
-            chmod +x final_binary/DownloadLog-ubuntu-arm64
-            echo "✅ Binary size: $(du -h final_binary/DownloadLog-ubuntu-arm64 | cut -f1)"
-          else
-            echo "❌ FATAL: Binary not found after extraction!"
-            echo "Contents of final_binary directory:"
-            ls -lha final_binary/
-            exit 1
-          fi
+          echo "=== Build artifact prepared successfully ==="
 
       - name: Upload Artifact
-        if: success()
         uses: actions/upload-artifact@v4
         with:
           name: DownloadLog-ubuntu-arm64-py313
