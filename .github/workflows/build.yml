@@ -85,20 +85,68 @@ jobs:
       - name: Create Optimized Multi-Stage Dockerfile
         run: |
           cat > Dockerfile.build << 'EOF'
-          FROM arm64v8/python:3.13-slim-bookworm AS app-builder
-          LABEL stage=app-builder
+          # =================================================================================
+          # Stage 1: Build Python 3.13 from source on an older OS (Ubuntu 20.04 - Focal)
+          # This ensures the Python interpreter itself is linked against GLIBC 2.31
+          # =================================================================================
+          FROM arm64v8/ubuntu:focal AS python-builder
+          LABEL stage=python-builder
+
+          ENV PYTHON_VERSION 3.13.0
           ENV DEBIAN_FRONTEND=noninteractive
+
+          # Install dependencies needed to build Python from source
           RUN apt-get update && apt-get install -y --no-install-recommends \
-              build-essential tk-dev tcl-dev blt libsqlite3-0 libssl-dev patchelf \
-              && rm -rf /var/lib/apt/lists/*
+              build-essential wget libssl-dev zlib1g-dev libncurses5-dev \
+              libncursesw5-dev libreadline-dev libgdbm-dev libdb5.3-dev \
+              libsqlite3-dev libbz2-dev libexpat1-dev liblzma-dev tk-dev \
+              libffi-dev && \
+              rm -rf /var/lib/apt/lists/*
+
+          # Download, compile, and install Python
+          WORKDIR /tmp
+          RUN wget https://www.python.org/ftp/python/$PYTHON_VERSION/Python-$PYTHON_VERSION.tgz && \
+              tar -xzf Python-$PYTHON_VERSION.tgz
+
+          WORKDIR /tmp/Python-$PYTHON_VERSION
+          # Configure with an isolated prefix and enable optimizations
+          RUN ./configure --prefix=/opt/python/$PYTHON_VERSION --enable-optimizations --with-lto
+          # Compile and install (use altinstall to not interfere with system python)
+          RUN make -j$(nproc) && make altinstall
+
+          # =================================================================================
+          # Stage 2: Build the Nuitka application using the custom-built Python
+          # This stage also uses the same Ubuntu 20.04 base to ensure library consistency
+          # =================================================================================
+          FROM arm64v8/ubuntu:focal AS app-builder
+          LABEL stage=app-builder
+
+          ENV PYTHON_VERSION 3.13.0
+          ENV DEBIAN_FRONTEND=noninteractive
+
+          # Copy the custom-built Python from the previous stage
+          COPY --from=python-builder /opt/python/$PYTHON_VERSION /usr/local/
+          # Make python3.13 and pip3.13 available on the PATH
+          RUN ln -s /usr/local/bin/python3.13 /usr/local/bin/python && \
+              ln -s /usr/local/bin/pip3.13 /usr/local/bin/pip
+
+          # Install application dependencies (like tk-dev for tkinter)
+          RUN apt-get update && apt-get install -y --no-install-recommends \
+              tk-dev tcl-dev blt libsqlite3-0 libssl-dev patchelf && \
+              rm -rf /var/lib/apt/lists/*
+
           WORKDIR /build
           COPY requirements.txt ./
           COPY app/ ./app/
           COPY build_app.py ./
-          RUN python3.13 -m pip install --no-cache-dir --upgrade pip \
-              && python3.13 -m pip install --no-cache-dir -r requirements.txt \
-              && python3.13 -m pip install --no-cache-dir nuitka
-          RUN python3.13 build_app.py
+
+          # Install Python packages using the custom-built pip
+          RUN pip install --no-cache-dir --upgrade pip
+          RUN pip install --no-cache-dir -r requirements.txt
+          RUN pip install --no-cache-dir nuitka
+
+          # Run the Nuitka build script using the custom-built Python
+          RUN python build_app.py
           EOF
 
       - name: Build Docker Image for ARM64
