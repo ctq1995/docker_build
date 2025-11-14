@@ -99,10 +99,6 @@ jobs:
               && python3.13 -m pip install --no-cache-dir -r requirements.txt \
               && python3.13 -m pip install --no-cache-dir nuitka
           RUN python3.13 build_app.py
-          RUN echo "=== Final check of build artifacts ===" \
-              && ls -lha /build/ \
-              && echo "=== Searching for binary ===" \
-              && find /build -type f -name "*DownloadLog*" ! -name "*.py"
           EOF
 
       - name: Build Docker Image for ARM64
@@ -115,16 +111,6 @@ jobs:
             -t py-app-builder:latest \
             .
 
-      - name: Debug - Check Build Output in Container
-        run: |
-          echo "=== Checking container file structure ==="
-          docker run --rm py-app-builder:latest sh -c "
-            echo '--- /build directory ---' && ls -lha /build/ && 
-            echo '--- /build/dist directory ---' && ls -lha /build/dist/ 2>/dev/null || echo 'No dist directory' &&
-            echo '--- Searching for all DownloadLog binaries ---' && 
-            find /build -type f -name '*DownloadLog*' ! -name '*.py' -exec ls -lh {} \;
-          "
-
       - name: Extract and Prepare Binary for Upload
         run: |
           set -e
@@ -132,11 +118,12 @@ jobs:
           
           echo "=== Extracting binary from container ==="
           docker run --rm \
+            --platform linux/arm64 \
             -v "$(pwd)/final_binary":/output \
             py-app-builder:latest \
             sh -c '
-              # Use 'find' to locate the binary, searching common Nuitka output locations
-              BINARY_PATH=$(find /build/dist -maxdepth 2 -type f -name "DownloadLog" -o -name "DownloadLog.bin" | head -n 1)
+              # Corrected search path: Nuitka output the binary directly to /build/
+              BINARY_PATH=$(find /build -maxdepth 1 -type f -name "DownloadLog.bin" | head -n 1)
               
               if [ -n "$BINARY_PATH" ]; then
                 echo "✅ Found binary at: $BINARY_PATH"
@@ -145,15 +132,16 @@ jobs:
                 install -m 755 "$BINARY_PATH" /output/DownloadLog-ubuntu-arm64
                 echo "✅ Binary copied to /output/DownloadLog-ubuntu-arm64"
               else
-                echo "❌ FATAL: Could not find compiled binary in /build/dist!"
+                echo "❌ FATAL: Could not find compiled binary!"
                 echo "All files in /build:"
-                find /build -type f -name "*DownloadLog*"
+                find /build -name "*DownloadLog*"
                 exit 1
               fi
             '
           echo "=== Build artifact prepared successfully ==="
 
       - name: Upload Artifact
+        if: success()
         uses: actions/upload-artifact@v4
         with:
           name: DownloadLog-ubuntu-arm64-py313
