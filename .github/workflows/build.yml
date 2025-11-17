@@ -1,4 +1,4 @@
-name: Build Python ARM64 Binary (Cross-Compilation - Optimized)
+name: Build Python 3.13 ARM64 Binary (GLIBC 2.31 Compatible)
 
 on:
   push:
@@ -6,11 +6,11 @@ on:
   workflow_dispatch:
 
 jobs:
-  build-arm64-binary:
-    name: Build Ubuntu ARM64 Binary via Cross-Compilation
+  build-compatible-arm64-binary:
+    name: Build Ubuntu ARM64 Binary (Python 3.13 on GLIBC 2.31)
     runs-on: ubuntu-latest
     timeout-minutes: 360
-    
+
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
@@ -68,10 +68,6 @@ jobs:
                       raise subprocess.CalledProcessError(process.returncode, cmd)
                   
                   print("\n✅ Nuitka build successful!")
-                  print("\n--- Files in current directory ---")
-                  os.system('ls -lha')
-                  print("\n--- Files in dist directory ---")
-                  os.system('ls -lha dist/ 2>/dev/null || echo "No dist directory"')
                   print("\n--- Looking for compiled binary ---")
                   os.system('find . -type f -name "*DownloadLog*" ! -name "*.py" -exec ls -lh {} \;')
               except subprocess.CalledProcessError as e:
@@ -82,22 +78,21 @@ jobs:
               main()
           BUILD_SCRIPT
 
-      - name: Create Optimized Multi-Stage Dockerfile
+      - name: Create Optimized Multi-Stage Dockerfile for Compatibility
         run: |
           cat > Dockerfile.build << 'EOF'
           # =================================================================================
           # Stage 1: Build Python 3.13 from source on an older OS (Ubuntu 20.04 - Focal)
-          # This ensures the Python interpreter itself is linked against GLIBC 2.31
           # =================================================================================
           FROM arm64v8/ubuntu:focal AS python-builder
           LABEL stage=python-builder
 
-          ENV PYTHON_VERSION 3.13.0
+          ENV PYTHON_VERSION=3.13.0
           ENV DEBIAN_FRONTEND=noninteractive
 
-          # Install dependencies needed to build Python from source
+          # Install dependencies, ADDING "ca-certificates" TO FIX THE SSL/TLS ERROR
           RUN apt-get update && apt-get install -y --no-install-recommends \
-              build-essential wget libssl-dev zlib1g-dev libncurses5-dev \
+              build-essential wget ca-certificates libssl-dev zlib1g-dev libncurses5-dev \
               libncursesw5-dev libreadline-dev libgdbm-dev libdb5.3-dev \
               libsqlite3-dev libbz2-dev libexpat1-dev liblzma-dev tk-dev \
               libffi-dev && \
@@ -109,28 +104,22 @@ jobs:
               tar -xzf Python-$PYTHON_VERSION.tgz
 
           WORKDIR /tmp/Python-$PYTHON_VERSION
-          # Configure with an isolated prefix and enable optimizations
           RUN ./configure --prefix=/opt/python/$PYTHON_VERSION --enable-optimizations --with-lto
-          # Compile and install (use altinstall to not interfere with system python)
           RUN make -j$(nproc) && make altinstall
 
           # =================================================================================
           # Stage 2: Build the Nuitka application using the custom-built Python
-          # This stage also uses the same Ubuntu 20.04 base to ensure library consistency
           # =================================================================================
           FROM arm64v8/ubuntu:focal AS app-builder
           LABEL stage=app-builder
 
-          ENV PYTHON_VERSION 3.13.0
+          ENV PYTHON_VERSION=3.13.0
           ENV DEBIAN_FRONTEND=noninteractive
 
-          # Copy the custom-built Python from the previous stage
           COPY --from=python-builder /opt/python/$PYTHON_VERSION /usr/local/
-          # Make python3.13 and pip3.13 available on the PATH
           RUN ln -s /usr/local/bin/python3.13 /usr/local/bin/python && \
               ln -s /usr/local/bin/pip3.13 /usr/local/bin/pip
 
-          # Install application dependencies (like tk-dev for tkinter)
           RUN apt-get update && apt-get install -y --no-install-recommends \
               tk-dev tcl-dev blt libsqlite3-0 libssl-dev patchelf && \
               rm -rf /var/lib/apt/lists/*
@@ -140,12 +129,10 @@ jobs:
           COPY app/ ./app/
           COPY build_app.py ./
 
-          # Install Python packages using the custom-built pip
           RUN pip install --no-cache-dir --upgrade pip
           RUN pip install --no-cache-dir -r requirements.txt
           RUN pip install --no-cache-dir nuitka
 
-          # Run the Nuitka build script using the custom-built Python
           RUN python build_app.py
           EOF
 
@@ -170,13 +157,11 @@ jobs:
             -v "$(pwd)/final_binary":/output \
             py-app-builder:latest \
             sh -c '
-              # Corrected search path: Nuitka output the binary directly to /build/
               BINARY_PATH=$(find /build -maxdepth 1 -type f -name "DownloadLog.bin" | head -n 1)
               
               if [ -n "$BINARY_PATH" ]; then
                 echo "✅ Found binary at: $BINARY_PATH"
                 ls -lh "$BINARY_PATH"
-                # Use install to copy the binary with the correct executable permissions
                 install -m 755 "$BINARY_PATH" /output/DownloadLog-ubuntu-arm64
                 echo "✅ Binary copied to /output/DownloadLog-ubuntu-arm64"
               else
@@ -192,5 +177,5 @@ jobs:
         if: success()
         uses: actions/upload-artifact@v4
         with:
-          name: DownloadLog-ubuntu-arm64-py313
+          name: DownloadLog-ubuntu-arm64-py313-glibc2.31
           path: final_binary/DownloadLog-ubuntu-arm64
