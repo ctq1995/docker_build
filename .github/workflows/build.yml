@@ -117,7 +117,6 @@ jobs:
           COPY --from=python-builder /opt/python/$PYTHON_VERSION /usr/local/
           RUN ln -s /usr/local/bin/python3.13 /usr/local/bin/python
 
-          # Install dependencies, ADDING "build-essential" FOR THE C COMPILER
           RUN apt-get update && apt-get install -y --no-install-recommends \
               build-essential tk-dev tcl-dev blt libsqlite3-0 libssl-dev patchelf && \
               rm -rf /var/lib/apt/lists/*
@@ -155,7 +154,8 @@ jobs:
             -v "$(pwd)/final_binary":/output \
             py-app-builder:latest \
             sh -c '
-              BINARY_PATH=$(find /build -maxdepth 1 -type f -name "DownloadLog.bin" | head -n 1)
+              # Recursively search for the binary, in case it is in a sub-directory
+              BINARY_PATH=$(find /build -type f -name "DownloadLog.bin" | head -n 1)
               
               if [ -n "$BINARY_PATH" ]; then
                 echo "✅ Found binary at: $BINARY_PATH"
@@ -163,8 +163,10 @@ jobs:
                 install -m 755 "$BINARY_PATH" /output/DownloadLog-ubuntu-arm64
                 echo "✅ Binary copied to /output/DownloadLog-ubuntu-arm64"
               else
-                echo "❌ FATAL: Could not find compiled binary!"
-                echo "All files in /build:"
+                echo "❌ FATAL: Could not find compiled binary named DownloadLog.bin!"
+                echo "--- Listing all files in /build for debugging ---"
+                find /build
+                echo "--- Searching for any files containing *DownloadLog* ---"
                 find /build -name "*DownloadLog*"
                 exit 1
               fi
@@ -176,4 +178,4 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: DownloadLog-ubuntu-arm64-py313-glibc2.31
-          path: final_binary/DownloadLog-ubuntu-arm64```
+          path: final_binary/DownloadLog-ubuntu-arm64
