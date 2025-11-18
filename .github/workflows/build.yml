@@ -115,11 +115,11 @@ jobs:
           ENV DEBIAN_FRONTEND=noninteractive
 
           COPY --from=python-builder /opt/python/$PYTHON_VERSION /usr/local/
-          # Symlink python3.13 to python. We will call pip via "python -m pip".
           RUN ln -s /usr/local/bin/python3.13 /usr/local/bin/python
 
+          # Install dependencies, ADDING "build-essential" FOR THE C COMPILER
           RUN apt-get update && apt-get install -y --no-install-recommends \
-              tk-dev tcl-dev blt libsqlite3-0 libssl-dev patchelf && \
+              build-essential tk-dev tcl-dev blt libsqlite3-0 libssl-dev patchelf && \
               rm -rf /var/lib/apt/lists/*
 
           WORKDIR /build
@@ -127,7 +127,6 @@ jobs:
           COPY app/ ./app/
           COPY build_app.py ./
 
-          # Use "python -m pip" to ensure we're using the pip from our custom build
           RUN python -m pip install --no-cache-dir --upgrade pip
           RUN python -m pip install --no-cache-dir -r requirements.txt
           RUN python -m pip install --no-cache-dir nuitka
