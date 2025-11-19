@@ -1,4 +1,4 @@
-name: Build All Platforms (Optimized & Fixed)
+name: Build All Platforms (Correct Python Version)
 
 on:
   push:
@@ -10,7 +10,7 @@ jobs:
   build-linux:
     name: Build Linux ${{ matrix.name }}
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    timeout-minutes: 360
     strategy:
       matrix:
         include:
@@ -38,10 +38,10 @@ jobs:
       - name: Create Multi-Stage Dockerfile for Build
         run: |
           cat > Dockerfile.build << 'EOF'
-          # --- FIX: Define PYTHON_VERSION as a global ARG ---
-          ARG PYTHON_VERSION=3.13.2
+          # --- FIX: Use a real, downloadable Python version ---
+          ARG PYTHON_VERSION=3.13.0
 
-          # Stage 1: Build Python 3.13.2 from source on Ubuntu 20.04 (Focal)
+          # Stage 1: Build Python from source on Ubuntu 20.04 (Focal)
           ARG BASE_IMAGE=ubuntu:20.04
           FROM ${BASE_IMAGE} AS python-builder
           LABEL stage=python-builder
@@ -57,11 +57,9 @@ jobs:
               rm -rf /var/lib/apt/lists/*
 
           WORKDIR /tmp
-          # Use the global ARG here
           RUN wget https://www.python.org/ftp/python/$PYTHON_VERSION/Python-$PYTHON_VERSION.tar.xz && \
               tar -xf Python-$PYTHON_VERSION.tar.xz
 
-          # And here
           WORKDIR /tmp/Python-$PYTHON_VERSION
           RUN ./configure --prefix=/opt/python/$PYTHON_VERSION --enable-optimizations --with-lto
           RUN make -j$(nproc) && make altinstall
@@ -73,7 +71,6 @@ jobs:
           ENV TZ=Etc/UTC
           ENV DEBIAN_FRONTEND=noninteractive
 
-          # --- FIX: The COPY command can now correctly use the global ARG ---
           COPY --from=python-builder /opt/python/$PYTHON_VERSION /usr/local/
           COPY --from=python-builder /usr/bin/upx /usr/bin/upx
           
@@ -140,7 +137,7 @@ jobs:
           name: ${{ matrix.output_name }}
           path: final_binary/${{ matrix.output_name }}
 
-  # Job 2: Build for Windows x64 with UPX and Cache
+  # Job 2: Build for Windows x64
   build-windows-x64:
     name: Build Windows x64
     runs-on: windows-latest
@@ -151,10 +148,11 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
-      - name: Set up Python 3.13.2 and Cache Pip
+      - name: Set up Python 3.13.0 and Cache Pip
         uses: actions/setup-python@v5
         with:
-          python-version: '3.13.2'
+          # Use the same, real version for Windows
+          python-version: '3.13.0'
           cache: 'pip' # Enable pip cache
 
       - name: Install UPX
