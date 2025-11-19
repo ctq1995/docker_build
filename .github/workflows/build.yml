@@ -1,4 +1,4 @@
-name: Build All Platforms (Final Version with Fontconfig)
+name: Build All Platforms (Ubuntu 22.04 with Portable Fix)
 
 on:
   push:
@@ -6,7 +6,6 @@ on:
   workflow_dispatch:
 
 jobs:
-  # Job 1: Build for Linux (x86_64 and ARM64) with UPX and Cache
   build-linux:
     name: Build Linux ${{ matrix.name }}
     runs-on: ubuntu-latest
@@ -16,63 +15,53 @@ jobs:
         include:
           - name: "x86_64"
             platform: "linux/amd64"
-            base_image: "ubuntu:20.04"
+            # --- YOUR SUGGESTION: Using Ubuntu 22.04 for amd64 build ---
+            base_image: "ubuntu:22.04"
             output_name: "DownloadLog-linux-x86_64"
           - name: "ARM64"
             platform: "linux/arm64"
+            # (Keeping 20.04 for ARM64 for stability, or can be changed to 22.04 if needed)
             base_image: "arm64v8/ubuntu:20.04"
             output_name: "DownloadLog-linux-arm64"
 
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
-
-      - name: Set up QEMU for ARM64 cross-compilation
+      - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
         with:
           platforms: arm64
-
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
-
-      - name: Create Simplified Dockerfile for Build
+      - name: Create Dockerfile
         run: |
           cat > Dockerfile.build << 'EOF'
           ARG PYTHON_VERSION=3.13.2
-          ARG BASE_IMAGE=ubuntu:20.04
-          
+          ARG BASE_IMAGE
           FROM ${BASE_IMAGE}
-
           ARG PYTHON_VERSION
           ARG build_name
-
           ENV TZ=Etc/UTC
           ENV DEBIAN_FRONTEND=noninteractive
-
-          # --- FINAL FIX: Add fontconfig for runtime font support ---
+          # This step remains CRITICAL. We install fontconfig to get its files for bundling.
           RUN apt-get update && apt-get install -y --no-install-recommends \
               build-essential wget ca-certificates libssl-dev zlib1g-dev libncurses5-dev \
               libncursesw5-dev libreadline-dev libgdbm-dev libdb5.3-dev \
               libsqlite3-dev libbz2-dev libexpat1-dev liblzma-dev tk-dev \
-              libffi-dev patchelf tzdata upx git fontconfig && \
+              libffi-dev patchelf tzdata upx git fontconfig fonts-dejavu-core && \
               rm -rf /var/lib/apt/lists/*
-
-          # --- Step 1: Build Python from source ---
           WORKDIR /tmp
           RUN git clone --depth 1 --branch v$PYTHON_VERSION https://github.com/python/cpython.git Python-$PYTHON_VERSION
           WORKDIR /tmp/Python-$PYTHON_VERSION
           RUN ./configure --prefix=/usr/local --enable-optimizations --with-lto
           RUN make -j$(nproc) && make altinstall
-          
-          # --- Step 2: Build the Nuitka application in the SAME stage ---
           WORKDIR /build
           COPY requirements.txt ./
           COPY app/ ./app/
-
           RUN python3.13 -m pip install --no-cache-dir --upgrade pip
           RUN python3.13 -m pip install --no-cache-dir -r requirements.txt
           RUN python3.13 -m pip install --no-cache-dir nuitka
-
+          # This step also remains CRITICAL. We bundle the config files into the executable.
           RUN python3.13 -m nuitka \
               --standalone \
               --onefile \
@@ -82,18 +71,18 @@ jobs:
               --enable-plugin=upx \
               --linux-icon=app/logico.ico \
               --include-data-file=app/myfont.otf=myfont.otf \
+              --include-data-dir=/etc/fonts=etc/fonts \
+              --include-data-dir=/usr/share/fonts/truetype/dejavu=usr/share/fonts/truetype/dejavu \
               --output-filename=${build_name} \
               --assume-yes-for-downloads \
               app/DownloadLog.py
           EOF
-
       - name: Cache Nuitka
         uses: actions/cache@v4
         with:
           path: ~/.nuitka
           key: ${{ runner.os }}-${{ matrix.name }}-nuitka-${{ hashFiles('**/requirements.txt', 'app/DownloadLog.py') }}
-
-      - name: Build Docker Image for ${{ matrix.platform }}
+      - name: Build Docker Image
         uses: docker/build-push-action@v5
         with:
           context: .
@@ -106,8 +95,7 @@ jobs:
             build_name=${{ matrix.output_name }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
-
-      - name: Extract Binary from Container
+      - name: Extract Binary
         run: |
           mkdir -p final_binary
           docker run --rm \
@@ -115,7 +103,6 @@ jobs:
             -v "$(pwd)/final_binary":/output \
             py-app-builder:${{ matrix.name }} \
             sh -c 'cp /build/${{ matrix.output_name }} /output/'
-
       - name: Upload Linux Artifact
         uses: actions/upload-artifact@v4
         with:
