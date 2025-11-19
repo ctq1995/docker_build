@@ -1,4 +1,4 @@
-name: Build All Platforms (Ubuntu 22.04 with Portable Fix)
+name: Build All Platforms (Conditional LTO)
 
 on:
   push:
@@ -15,57 +15,65 @@ jobs:
         include:
           - name: "x86_64"
             platform: "linux/amd64"
-            # --- YOUR SUGGESTION: Using Ubuntu 22.04 for amd64 build ---
             base_image: "ubuntu:22.04"
             output_name: "DownloadLog-linux-x86_64"
           - name: "ARM64"
             platform: "linux/arm64"
-            # (Keeping 20.04 for ARM64 for stability, or can be changed to 22.04 if needed)
             base_image: "arm64v8/ubuntu:20.04"
             output_name: "DownloadLog-linux-arm64"
 
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
-      - name: Set up QEMU
+
+      - name: Set up QEMU for ARM64 cross-compilation
         uses: docker/setup-qemu-action@v3
         with:
           platforms: arm64
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
-      - name: Create Dockerfile
+
+      - name: Create Dockerfile with Conditional LTO
         run: |
           cat > Dockerfile.build << 'EOF'
           ARG PYTHON_VERSION=3.13.2
           ARG BASE_IMAGE
           FROM ${BASE_IMAGE}
+
           ARG PYTHON_VERSION
           ARG build_name
+          # --- NEW: Argument to control LTO, defaults to 'yes' ---
+          ARG LTO_FLAG="--lto=yes"
+
           ENV TZ=Etc/UTC
           ENV DEBIAN_FRONTEND=noninteractive
-          # This step remains CRITICAL. We install fontconfig to get its files for bundling.
+          
           RUN apt-get update && apt-get install -y --no-install-recommends \
               build-essential wget ca-certificates libssl-dev zlib1g-dev libncurses5-dev \
               libncursesw5-dev libreadline-dev libgdbm-dev libdb5.3-dev \
               libsqlite3-dev libbz2-dev libexpat1-dev liblzma-dev tk-dev \
               libffi-dev patchelf tzdata upx git fontconfig fonts-dejavu-core && \
               rm -rf /var/lib/apt/lists/*
+
           WORKDIR /tmp
           RUN git clone --depth 1 --branch v$PYTHON_VERSION https://github.com/python/cpython.git Python-$PYTHON_VERSION
           WORKDIR /tmp/Python-$PYTHON_VERSION
           RUN ./configure --prefix=/usr/local --enable-optimizations --with-lto
           RUN make -j$(nproc) && make altinstall
+
           WORKDIR /build
           COPY requirements.txt ./
           COPY app/ ./app/
           RUN python3.13 -m pip install --no-cache-dir --upgrade pip
           RUN python3.13 -m pip install --no-cache-dir -r requirements.txt
           RUN python3.13 -m pip install --no-cache-dir nuitka
-          # This step also remains CRITICAL. We bundle the config files into the executable.
+
+          # --- CHANGE: Use the LTO_FLAG argument provided by the build command ---
           RUN python3.13 -m nuitka \
               --standalone \
               --onefile \
-              --lto=yes \
+              ${LTO_FLAG} \
               --remove-output \
               --enable-plugin=tk-inter \
               --enable-plugin=upx \
@@ -77,11 +85,13 @@ jobs:
               --assume-yes-for-downloads \
               app/DownloadLog.py
           EOF
+
       - name: Cache Nuitka
         uses: actions/cache@v4
         with:
           path: ~/.nuitka
           key: ${{ runner.os }}-${{ matrix.name }}-nuitka-${{ hashFiles('**/requirements.txt', 'app/DownloadLog.py') }}
+
       - name: Build Docker Image
         uses: docker/build-push-action@v5
         with:
@@ -90,11 +100,16 @@ jobs:
           platforms: ${{ matrix.platform }}
           load: true
           tags: py-app-builder:${{ matrix.name }}
+          # --- KEY CHANGE: Conditionally set LTO_FLAG for ARM build ---
+          # If the platform is 'linux/arm64', pass '--lto=no'.
+          # Otherwise (for amd64), pass '--lto=yes'.
           build-args: |
             BASE_IMAGE=${{ matrix.base_image }}
             build_name=${{ matrix.output_name }}
+            LTO_FLAG=${{ matrix.platform == 'linux/arm64' && '--lto=no' || '--lto=yes' }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
       - name: Extract Binary
         run: |
           mkdir -p final_binary
@@ -103,46 +118,41 @@ jobs:
             -v "$(pwd)/final_binary":/output \
             py-app-builder:${{ matrix.name }} \
             sh -c 'cp /build/${{ matrix.output_name }} /output/'
+
       - name: Upload Linux Artifact
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.output_name }}
           path: final_binary/${{ matrix.output_name }}
 
-  # Job 2: Build for Windows x64
+  # Windows build job remains unchanged
   build-windows-x64:
     name: Build Windows x64
     runs-on: windows-latest
     timeout-minutes: 60
     needs: []
-
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
-
       - name: Set up Python 3.13.2 and Cache Pip
         uses: actions/setup-python@v5
         with:
           python-version: '3.13.2'
           cache: 'pip'
-
       - name: Install UPX
         uses: crazy-max/ghaction-upx@v3
         with:
           install-only: true
-
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
           pip install nuitka
-
       - name: Cache Nuitka
         uses: actions/cache@v4
         with:
           path: ~\AppData\Local\Nuitka\Nuitka
           key: ${{ runner.os }}-nuitka-${{ hashFiles('**/requirements.txt', 'app/DownloadLog.py') }}
-
       - name: Run Nuitka Build
         run: |
           python -m nuitka `
@@ -159,7 +169,6 @@ jobs:
             --assume-yes-for-downloads `
             app/DownloadLog.py
         shell: pwsh
-
       - name: Upload Windows Artifact
         uses: actions/upload-artifact@v4
         with:
