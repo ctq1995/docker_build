@@ -1,4 +1,4 @@
-name: Build All Platforms (Final Version)
+name: Build All Platforms (Final Version with Fontconfig)
 
 on:
   push:
@@ -38,25 +38,23 @@ jobs:
       - name: Create Simplified Dockerfile for Build
         run: |
           cat > Dockerfile.build << 'EOF'
-          # --- FINAL REVISION: Use a single, unified build stage ---
           ARG PYTHON_VERSION=3.13.2
           ARG BASE_IMAGE=ubuntu:20.04
           
           FROM ${BASE_IMAGE}
 
-          # Bring all build arguments into the stage's scope
           ARG PYTHON_VERSION
           ARG build_name
 
           ENV TZ=Etc/UTC
           ENV DEBIAN_FRONTEND=noninteractive
 
-          # Install ALL build dependencies for both Python and Nuitka in one go
+          # --- FINAL FIX: Add fontconfig for runtime font support ---
           RUN apt-get update && apt-get install -y --no-install-recommends \
               build-essential wget ca-certificates libssl-dev zlib1g-dev libncurses5-dev \
               libncursesw5-dev libreadline-dev libgdbm-dev libdb5.3-dev \
               libsqlite3-dev libbz2-dev libexpat1-dev liblzma-dev tk-dev \
-              libffi-dev patchelf tzdata upx git && \
+              libffi-dev patchelf tzdata upx git fontconfig && \
               rm -rf /var/lib/apt/lists/*
 
           # --- Step 1: Build Python from source ---
