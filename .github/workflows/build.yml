@@ -1,4 +1,4 @@
-name: Build All Platforms (Git Clone Python 3.13.2)
+name: Build All Platforms (Final Fix)
 
 on:
   push:
@@ -45,7 +45,6 @@ jobs:
           FROM ${BASE_IMAGE} AS python-builder
           LABEL stage=python-builder
 
-          # --- FIX: Redeclare ARG to bring its value into this stage's scope ---
           ARG PYTHON_VERSION
 
           ENV TZ=Etc/UTC
@@ -59,7 +58,6 @@ jobs:
               rm -rf /var/lib/apt/lists/*
 
           WORKDIR /tmp
-          # Now, $PYTHON_VERSION will be correctly expanded in this RUN command
           RUN git clone --depth 1 --branch v$PYTHON_VERSION https://github.com/python/cpython.git Python-$PYTHON_VERSION
 
           WORKDIR /tmp/Python-$PYTHON_VERSION
@@ -70,14 +68,17 @@ jobs:
           FROM ${BASE_IMAGE} AS app-builder
           LABEL stage=app-builder
           
-          # --- FIX: Redeclare ARG here as well for the COPY command's safety ---
           ARG PYTHON_VERSION
+          # --- FIX 1: Bring build_name into this stage's scope ---
+          ARG build_name
 
           ENV TZ=Etc/UTC
           ENV DEBIAN_FRONTEND=noninteractive
 
           COPY --from=python-builder /opt/python/$PYTHON_VERSION /usr/local/
           COPY --from=python-builder /usr/bin/upx /usr/bin/upx
+          # --- FIX 2: Copy patchelf from the builder stage ---
+          COPY --from=python-builder /usr/bin/patchelf /usr/bin/patchelf
           
           RUN ln -s /usr/local/bin/python3.13 /usr/local/bin/python
 
