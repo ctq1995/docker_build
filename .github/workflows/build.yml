@@ -1,4 +1,4 @@
-name: Build All Platforms (Python 3.13.2)
+name: Build All Platforms from App Directory (Python 3.13.2)
 
 on:
   push:
@@ -10,7 +10,7 @@ jobs:
   build-linux:
     name: Build Linux ${{ matrix.name }}
     runs-on: ubuntu-latest
-    timeout-minutes: 360
+    timeout-minutes: 90
     strategy:
       matrix:
         include:
@@ -38,11 +38,7 @@ jobs:
       - name: Create Multi-Stage Dockerfile for Build
         run: |
           cat > Dockerfile.build << 'EOF'
-          # =================================================================================
           # Stage 1: Build Python 3.13.2 from source on Ubuntu 20.04 (Focal)
-          # This ensures compatibility with older GLIBC (2.31)
-          # The base image is dynamically provided by the build matrix.
-          # =================================================================================
           ARG BASE_IMAGE=ubuntu:20.04
           FROM ${BASE_IMAGE} AS python-builder
           LABEL stage=python-builder
@@ -62,49 +58,41 @@ jobs:
               tar -xf Python-$PYTHON_VERSION.tar.xz
 
           WORKDIR /tmp/Python-$PYTHON_VERSION
-          # Configure with optimizations and LTO for smaller binary size
           RUN ./configure --prefix=/opt/python/$PYTHON_VERSION --enable-optimizations --with-lto
           RUN make -j$(nproc) && make altinstall
 
-          # =================================================================================
-          # Stage 2: Build the Nuitka application using the custom-built Python
-          # =================================================================================
+          # Stage 2: Build the Nuitka application
           FROM ${BASE_IMAGE} AS app-builder
           LABEL stage=app-builder
 
-          ENV PYTHON_VERSION=3.13.2
-          ENV DEBIAN_FRONTEND=noninteractive
-          
-          # Copy the custom Python build from the previous stage
           COPY --from=python-builder /opt/python/$PYTHON_VERSION /usr/local/
           RUN ln -s /usr/local/bin/python3.13 /usr/local/bin/python
 
-          # Install runtime dependencies for the app
           RUN apt-get update && apt-get install -y --no-install-recommends \
               libsqlite3-0 libssl-dev tk-dev tcl-dev && \
               rm -rf /var/lib/apt/lists/*
           
           WORKDIR /build
+          # Copy source files from the new directory structure
           COPY requirements.txt ./
-          COPY DownloadLog.py ./
-          COPY myfont.otf ./
+          COPY app/ ./app/
 
-          # Install Nuitka and dependencies
           RUN python -m pip install --no-cache-dir --upgrade pip
           RUN python -m pip install --no-cache-dir -r requirements.txt
           RUN python -m pip install --no-cache-dir nuitka
 
-          # Run Nuitka with size optimization flags
+          # Run Nuitka, pointing to the new paths and adding the icon
           RUN python -m nuitka \
               --standalone \
               --onefile \
               --lto=yes \
               --remove-output \
               --enable-plugin=tk-inter \
-              --include-data-file=myfont.otf=myfont.otf \
-              --output-filename=${{ matrix.output_name }} \
+              --linux-icon=app/logico.ico \
+              --include-data-file=app/myfont.otf=myfont.otf \
+              --output-filename=${build_name} \
               --assume-yes-for-downloads \
-              DownloadLog.py
+              app/DownloadLog.py
           EOF
 
       - name: Build Docker Image for ${{ matrix.platform }}
@@ -112,6 +100,7 @@ jobs:
           docker buildx build \
             --platform ${{ matrix.platform }} \
             --build-arg BASE_IMAGE=${{ matrix.base_image }} \
+            --build-arg build_name=${{ matrix.output_name }} \
             --load \
             --progress=plain \
             -f Dockerfile.build \
@@ -138,7 +127,6 @@ jobs:
     name: Build Windows x64
     runs-on: windows-latest
     timeout-minutes: 60
-    # This job runs in parallel with the Linux job
     needs: []
 
     steps:
@@ -165,10 +153,11 @@ jobs:
             --remove-output `
             --windows-disable-console `
             --enable-plugin=tk-inter `
-            --include-data-file="myfont.otf=myfont.otf" `
+            --windows-icon-from-ico="app/logico.ico" `
+            --include-data-file="app/myfont.otf=myfont.otf" `
             --output-filename="DownloadLog-win64" `
             --assume-yes-for-downloads `
-            DownloadLog.py
+            app/DownloadLog.py
         shell: pwsh
 
       - name: Upload Windows Artifact
