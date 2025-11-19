@@ -10,7 +10,7 @@ jobs:
   build-linux:
     name: Build Linux ${{ matrix.name }}
     runs-on: ubuntu-latest
-    timeout-minutes: 360 # Increased timeout as cloning/compiling can be longer
+    timeout-minutes: 360
     strategy:
       matrix:
         include:
@@ -38,7 +38,6 @@ jobs:
       - name: Create Multi-Stage Dockerfile for Build
         run: |
           cat > Dockerfile.build << 'EOF'
-          # Use Python 3.13.2, which we will clone from Git
           ARG PYTHON_VERSION=3.13.2
 
           # Stage 1: Build Python from source on Ubuntu 20.04 (Focal)
@@ -46,10 +45,12 @@ jobs:
           FROM ${BASE_IMAGE} AS python-builder
           LABEL stage=python-builder
 
+          # --- FIX: Redeclare ARG to bring its value into this stage's scope ---
+          ARG PYTHON_VERSION
+
           ENV TZ=Etc/UTC
           ENV DEBIAN_FRONTEND=noninteractive
 
-          # --- CHANGE: Added git to the install list ---
           RUN apt-get update && apt-get install -y --no-install-recommends \
               build-essential wget ca-certificates libssl-dev zlib1g-dev libncurses5-dev \
               libncursesw5-dev libreadline-dev libgdbm-dev libdb5.3-dev \
@@ -58,7 +59,7 @@ jobs:
               rm -rf /var/lib/apt/lists/*
 
           WORKDIR /tmp
-          # --- CHANGE: Clone from GitHub instead of using wget ---
+          # Now, $PYTHON_VERSION will be correctly expanded in this RUN command
           RUN git clone --depth 1 --branch v$PYTHON_VERSION https://github.com/python/cpython.git Python-$PYTHON_VERSION
 
           WORKDIR /tmp/Python-$PYTHON_VERSION
@@ -68,6 +69,9 @@ jobs:
           # Stage 2: Build the Nuitka application
           FROM ${BASE_IMAGE} AS app-builder
           LABEL stage=app-builder
+          
+          # --- FIX: Redeclare ARG here as well for the COPY command's safety ---
+          ARG PYTHON_VERSION
 
           ENV TZ=Etc/UTC
           ENV DEBIAN_FRONTEND=noninteractive
@@ -152,7 +156,6 @@ jobs:
       - name: Set up Python 3.13.2 and Cache Pip
         uses: actions/setup-python@v5
         with:
-          # Windows binary installers are usually available, so this should work
           python-version: '3.13.2'
           cache: 'pip'
 
