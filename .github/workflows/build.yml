@@ -1,4 +1,4 @@
-name: Build All Platforms (Optimized)
+name: Build All Platforms (Optimized & Fixed)
 
 on:
   push:
@@ -10,7 +10,7 @@ jobs:
   build-linux:
     name: Build Linux ${{ matrix.name }}
     runs-on: ubuntu-latest
-    timeout-minutes: 360
+    timeout-minutes: 90
     strategy:
       matrix:
         include:
@@ -38,6 +38,9 @@ jobs:
       - name: Create Multi-Stage Dockerfile for Build
         run: |
           cat > Dockerfile.build << 'EOF'
+          # --- FIX: Define PYTHON_VERSION as a global ARG ---
+          ARG PYTHON_VERSION=3.13.2
+
           # Stage 1: Build Python 3.13.2 from source on Ubuntu 20.04 (Focal)
           ARG BASE_IMAGE=ubuntu:20.04
           FROM ${BASE_IMAGE} AS python-builder
@@ -45,7 +48,6 @@ jobs:
 
           ENV TZ=Etc/UTC
           ENV DEBIAN_FRONTEND=noninteractive
-          ENV PYTHON_VERSION=3.13.2
 
           RUN apt-get update && apt-get install -y --no-install-recommends \
               build-essential wget ca-certificates libssl-dev zlib1g-dev libncurses5-dev \
@@ -55,9 +57,11 @@ jobs:
               rm -rf /var/lib/apt/lists/*
 
           WORKDIR /tmp
+          # Use the global ARG here
           RUN wget https://www.python.org/ftp/python/$PYTHON_VERSION/Python-$PYTHON_VERSION.tar.xz && \
               tar -xf Python-$PYTHON_VERSION.tar.xz
 
+          # And here
           WORKDIR /tmp/Python-$PYTHON_VERSION
           RUN ./configure --prefix=/opt/python/$PYTHON_VERSION --enable-optimizations --with-lto
           RUN make -j$(nproc) && make altinstall
@@ -69,6 +73,7 @@ jobs:
           ENV TZ=Etc/UTC
           ENV DEBIAN_FRONTEND=noninteractive
 
+          # --- FIX: The COPY command can now correctly use the global ARG ---
           COPY --from=python-builder /opt/python/$PYTHON_VERSION /usr/local/
           COPY --from=python-builder /usr/bin/upx /usr/bin/upx
           
