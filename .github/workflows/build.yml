@@ -1,4 +1,4 @@
-name: Build All Platforms from App Directory (Python 3.13.2)
+name: Build All Platforms (Optimized)
 
 on:
   push:
@@ -6,11 +6,11 @@ on:
   workflow_dispatch:
 
 jobs:
-  # Job 1: Build for Linux (x86_64 and ARM64) using a Matrix
+  # Job 1: Build for Linux (x86_64 and ARM64) with UPX and Cache
   build-linux:
     name: Build Linux ${{ matrix.name }}
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    timeout-minutes: 360
     strategy:
       matrix:
         include:
@@ -43,14 +43,15 @@ jobs:
           FROM ${BASE_IMAGE} AS python-builder
           LABEL stage=python-builder
 
-          ENV PYTHON_VERSION=3.13.2
+          ENV TZ=Etc/UTC
           ENV DEBIAN_FRONTEND=noninteractive
+          ENV PYTHON_VERSION=3.13.2
 
           RUN apt-get update && apt-get install -y --no-install-recommends \
               build-essential wget ca-certificates libssl-dev zlib1g-dev libncurses5-dev \
               libncursesw5-dev libreadline-dev libgdbm-dev libdb5.3-dev \
               libsqlite3-dev libbz2-dev libexpat1-dev liblzma-dev tk-dev \
-              libffi-dev patchelf && \
+              libffi-dev patchelf tzdata upx && \
               rm -rf /var/lib/apt/lists/*
 
           WORKDIR /tmp
@@ -65,15 +66,19 @@ jobs:
           FROM ${BASE_IMAGE} AS app-builder
           LABEL stage=app-builder
 
+          ENV TZ=Etc/UTC
+          ENV DEBIAN_FRONTEND=noninteractive
+
           COPY --from=python-builder /opt/python/$PYTHON_VERSION /usr/local/
+          COPY --from=python-builder /usr/bin/upx /usr/bin/upx
+          
           RUN ln -s /usr/local/bin/python3.13 /usr/local/bin/python
 
           RUN apt-get update && apt-get install -y --no-install-recommends \
-              libsqlite3-0 libssl-dev tk-dev tcl-dev && \
+              libsqlite3-0 libssl-dev tk-dev tcl-dev tzdata && \
               rm -rf /var/lib/apt/lists/*
           
           WORKDIR /build
-          # Copy source files from the new directory structure
           COPY requirements.txt ./
           COPY app/ ./app/
 
@@ -81,13 +86,13 @@ jobs:
           RUN python -m pip install --no-cache-dir -r requirements.txt
           RUN python -m pip install --no-cache-dir nuitka
 
-          # Run Nuitka, pointing to the new paths and adding the icon
           RUN python -m nuitka \
               --standalone \
               --onefile \
               --lto=yes \
               --remove-output \
               --enable-plugin=tk-inter \
+              --enable-plugin=upx \
               --linux-icon=app/logico.ico \
               --include-data-file=app/myfont.otf=myfont.otf \
               --output-filename=${build_name} \
@@ -95,17 +100,25 @@ jobs:
               app/DownloadLog.py
           EOF
 
+      - name: Cache Nuitka
+        uses: actions/cache@v4
+        with:
+          path: ~/.nuitka
+          key: ${{ runner.os }}-${{ matrix.name }}-nuitka-${{ hashFiles('**/requirements.txt', 'app/DownloadLog.py') }}
+
       - name: Build Docker Image for ${{ matrix.platform }}
-        run: |
-          docker buildx build \
-            --platform ${{ matrix.platform }} \
-            --build-arg BASE_IMAGE=${{ matrix.base_image }} \
-            --build-arg build_name=${{ matrix.output_name }} \
-            --load \
-            --progress=plain \
-            -f Dockerfile.build \
-            -t py-app-builder:${{ matrix.name }} \
-            .
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./Dockerfile.build
+          platforms: ${{ matrix.platform }}
+          load: true
+          tags: py-app-builder:${{ matrix.name }}
+          build-args: |
+            BASE_IMAGE=${{ matrix.base_image }}
+            build_name=${{ matrix.output_name }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
 
       - name: Extract Binary from Container
         run: |
@@ -122,7 +135,7 @@ jobs:
           name: ${{ matrix.output_name }}
           path: final_binary/${{ matrix.output_name }}
 
-  # Job 2: Build for Windows x64
+  # Job 2: Build for Windows x64 with UPX and Cache
   build-windows-x64:
     name: Build Windows x64
     runs-on: windows-latest
@@ -133,16 +146,28 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
-      - name: Set up Python 3.13.2
+      - name: Set up Python 3.13.2 and Cache Pip
         uses: actions/setup-python@v5
         with:
           python-version: '3.13.2'
+          cache: 'pip' # Enable pip cache
+
+      - name: Install UPX
+        uses: crazy-max/ghaction-upx@v3
+        with:
+          install-only: true
 
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
           pip install nuitka
+
+      - name: Cache Nuitka
+        uses: actions/cache@v4
+        with:
+          path: ~\AppData\Local\Nuitka\Nuitka
+          key: ${{ runner.os }}-nuitka-${{ hashFiles('**/requirements.txt', 'app/DownloadLog.py') }}
 
       - name: Run Nuitka Build
         run: |
@@ -153,6 +178,7 @@ jobs:
             --remove-output `
             --windows-disable-console `
             --enable-plugin=tk-inter `
+            --enable-plugin=upx `
             --windows-icon-from-ico="app/logico.ico" `
             --include-data-file="app/myfont.otf=myfont.otf" `
             --output-filename="DownloadLog-win64" `
