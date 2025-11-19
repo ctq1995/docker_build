@@ -1,4 +1,4 @@
-name: Build Python 3.13 ARM64 Binary (GLIBC 2.31 Compatible)
+name: Build All Platforms (Python 3.13.2)
 
 on:
   push:
@@ -6,10 +6,22 @@ on:
   workflow_dispatch:
 
 jobs:
-  build-compatible-arm64-binary:
-    name: Build Ubuntu ARM64 Binary (Python 3.13 on GLIBC 2.31)
+  # Job 1: Build for Linux (x86_64 and ARM64) using a Matrix
+  build-linux:
+    name: Build Linux ${{ matrix.name }}
     runs-on: ubuntu-latest
     timeout-minutes: 360
+    strategy:
+      matrix:
+        include:
+          - name: "x86_64"
+            platform: "linux/amd64"
+            base_image: "ubuntu:20.04"
+            output_name: "DownloadLog-linux-x86_64"
+          - name: "ARM64"
+            platform: "linux/arm64"
+            base_image: "arm64v8/ubuntu:20.04"
+            output_name: "DownloadLog-linux-arm64"
 
     steps:
       - name: Checkout Repository
@@ -23,159 +35,144 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Create Python Build Script for Nuitka
-        run: |
-          cat > build_app.py << 'BUILD_SCRIPT'
-          import os
-          import subprocess
-          import sys
-          
-          def find_tcl_tk_paths():
-              possible_tcl_paths = ['/usr/share/tcltk/tcl8.6', '/usr/lib/aarch64-linux-gnu/tcl8.6']
-              possible_tk_paths = ['/usr/share/tcltk/tk8.6', '/usr/lib/aarch64-linux-gnu/tk8.6']
-              tcl_dir = next((path for path in possible_tcl_paths if os.path.isdir(path)), None)
-              tk_dir = next((path for path in possible_tk_paths if os.path.isdir(path)), None)
-              return tcl_dir, tk_dir
-          
-          def main():
-              print("=== Starting Python Application Build using Nuitka (for ARM64) ===")
-              tcl_dir, tk_dir = find_tcl_tk_paths()
-              if not tcl_dir or not tk_dir:
-                  print("❌ FATAL: Could not find Tcl/Tk library paths.")
-                  sys.exit(1)
-              print(f"✅ Found Tcl library at: {tcl_dir}")
-              print(f"✅ Found Tk library at: {tk_dir}")
-              
-              cmd = [
-                  'python3.13', '-m', 'nuitka',
-                  '--onefile', '--standalone', '--enable-plugin=tk-inter',
-                  '--low-memory', '--show-progress', '--verbose',
-                  f'--tcl-library-dir={tcl_dir}', f'--tk-library-dir={tk_dir}',
-                  f'--include-data-dir={tcl_dir}={os.path.basename(tcl_dir)}',
-                  f'--include-data-dir={tk_dir}={os.path.basename(tk_dir)}',
-                  '--include-data-file=app/myfont.otf=myfont.otf',
-                  '--assume-yes-for-downloads',
-                  'app/DownloadLog.py'
-              ]
-              
-              print("\n🚀 Running Nuitka command:\n" + ' '.join(cmd) + "\n")
-              try:
-                  process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
-                  for line in iter(process.stdout.readline, ''):
-                      print(line, end='')
-                  process.wait()
-                  if process.returncode != 0:
-                      raise subprocess.CalledProcessError(process.returncode, cmd)
-                  
-                  print("\n✅ Nuitka build successful!")
-                  print("\n--- Looking for compiled binary ---")
-                  os.system('find . -type f -name "*DownloadLog*" ! -name "*.py" -exec ls -lh {} \;')
-              except subprocess.CalledProcessError as e:
-                  print(f"❌ FATAL: Nuitka build failed with exit code {e.returncode}!")
-                  sys.exit(e.returncode)
-          
-          if __name__ == '__main__':
-              main()
-          BUILD_SCRIPT
-
-      - name: Create Optimized Multi-Stage Dockerfile for Compatibility
+      - name: Create Multi-Stage Dockerfile for Build
         run: |
           cat > Dockerfile.build << 'EOF'
           # =================================================================================
-          # Stage 1: Build Python 3.13 from source on an older OS (Ubuntu 20.04 - Focal)
+          # Stage 1: Build Python 3.13.2 from source on Ubuntu 20.04 (Focal)
+          # This ensures compatibility with older GLIBC (2.31)
+          # The base image is dynamically provided by the build matrix.
           # =================================================================================
-          FROM arm64v8/ubuntu:focal AS python-builder
+          ARG BASE_IMAGE=ubuntu:20.04
+          FROM ${BASE_IMAGE} AS python-builder
           LABEL stage=python-builder
 
-          ENV PYTHON_VERSION=3.13.0
+          ENV PYTHON_VERSION=3.13.2
           ENV DEBIAN_FRONTEND=noninteractive
 
           RUN apt-get update && apt-get install -y --no-install-recommends \
               build-essential wget ca-certificates libssl-dev zlib1g-dev libncurses5-dev \
               libncursesw5-dev libreadline-dev libgdbm-dev libdb5.3-dev \
               libsqlite3-dev libbz2-dev libexpat1-dev liblzma-dev tk-dev \
-              libffi-dev && \
+              libffi-dev patchelf && \
               rm -rf /var/lib/apt/lists/*
 
           WORKDIR /tmp
-          RUN wget https://www.python.org/ftp/python/$PYTHON_VERSION/Python-$PYTHON_VERSION.tgz && \
-              tar -xzf Python-$PYTHON_VERSION.tgz
+          RUN wget https://www.python.org/ftp/python/$PYTHON_VERSION/Python-$PYTHON_VERSION.tar.xz && \
+              tar -xf Python-$PYTHON_VERSION.tar.xz
 
           WORKDIR /tmp/Python-$PYTHON_VERSION
+          # Configure with optimizations and LTO for smaller binary size
           RUN ./configure --prefix=/opt/python/$PYTHON_VERSION --enable-optimizations --with-lto
           RUN make -j$(nproc) && make altinstall
 
           # =================================================================================
           # Stage 2: Build the Nuitka application using the custom-built Python
           # =================================================================================
-          FROM arm64v8/ubuntu:focal AS app-builder
+          FROM ${BASE_IMAGE} AS app-builder
           LABEL stage=app-builder
 
-          ENV PYTHON_VERSION=3.13.0
+          ENV PYTHON_VERSION=3.13.2
           ENV DEBIAN_FRONTEND=noninteractive
-
+          
+          # Copy the custom Python build from the previous stage
           COPY --from=python-builder /opt/python/$PYTHON_VERSION /usr/local/
           RUN ln -s /usr/local/bin/python3.13 /usr/local/bin/python
 
+          # Install runtime dependencies for the app
           RUN apt-get update && apt-get install -y --no-install-recommends \
-              build-essential tk-dev tcl-dev blt libsqlite3-0 libssl-dev patchelf && \
+              libsqlite3-0 libssl-dev tk-dev tcl-dev && \
               rm -rf /var/lib/apt/lists/*
-
+          
           WORKDIR /build
           COPY requirements.txt ./
-          COPY app/ ./app/
-          COPY build_app.py ./
+          COPY DownloadLog.py ./
+          COPY myfont.otf ./
 
+          # Install Nuitka and dependencies
           RUN python -m pip install --no-cache-dir --upgrade pip
           RUN python -m pip install --no-cache-dir -r requirements.txt
           RUN python -m pip install --no-cache-dir nuitka
 
-          RUN python build_app.py
+          # Run Nuitka with size optimization flags
+          RUN python -m nuitka \
+              --standalone \
+              --onefile \
+              --lto=yes \
+              --remove-output \
+              --enable-plugin=tk-inter \
+              --include-data-file=myfont.otf=myfont.otf \
+              --output-filename=${{ matrix.output_name }} \
+              --assume-yes-for-downloads \
+              DownloadLog.py
           EOF
 
-      - name: Build Docker Image for ARM64
+      - name: Build Docker Image for ${{ matrix.platform }}
         run: |
           docker buildx build \
-            --platform linux/arm64 \
+            --platform ${{ matrix.platform }} \
+            --build-arg BASE_IMAGE=${{ matrix.base_image }} \
             --load \
             --progress=plain \
             -f Dockerfile.build \
-            -t py-app-builder:latest \
+            -t py-app-builder:${{ matrix.name }} \
             .
 
-      - name: Extract and Prepare Binary for Upload
+      - name: Extract Binary from Container
         run: |
-          set -e
           mkdir -p final_binary
-          
-          echo "=== Extracting binary from container ==="
           docker run --rm \
-            --platform linux/arm64 \
+            --platform ${{ matrix.platform }} \
             -v "$(pwd)/final_binary":/output \
-            py-app-builder:latest \
-            sh -c '
-              # Recursively search for the binary, in case it is in a sub-directory
-              BINARY_PATH=$(find /build -type f -name "DownloadLog.bin" | head -n 1)
-              
-              if [ -n "$BINARY_PATH" ]; then
-                echo "✅ Found binary at: $BINARY_PATH"
-                ls -lh "$BINARY_PATH"
-                install -m 755 "$BINARY_PATH" /output/DownloadLog-ubuntu-arm64
-                echo "✅ Binary copied to /output/DownloadLog-ubuntu-arm64"
-              else
-                echo "❌ FATAL: Could not find compiled binary named DownloadLog.bin!"
-                echo "--- Listing all files in /build for debugging ---"
-                find /build
-                echo "--- Searching for any files containing *DownloadLog* ---"
-                find /build -name "*DownloadLog*"
-                exit 1
-              fi
-            '
-          echo "=== Build artifact prepared successfully ==="
+            py-app-builder:${{ matrix.name }} \
+            sh -c 'cp /build/${{ matrix.output_name }} /output/'
 
-      - name: Upload Artifact
-        if: success()
+      - name: Upload Linux Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: DownloadLog-ubuntu-arm64-py313-glibc2.31
-          path: final_binary/DownloadLog-ubuntu-arm64
+          name: ${{ matrix.output_name }}
+          path: final_binary/${{ matrix.output_name }}
+
+  # Job 2: Build for Windows x64
+  build-windows-x64:
+    name: Build Windows x64
+    runs-on: windows-latest
+    timeout-minutes: 60
+    # This job runs in parallel with the Linux job
+    needs: []
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.13.2
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13.2'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install nuitka
+
+      - name: Run Nuitka Build
+        run: |
+          python -m nuitka `
+            --standalone `
+            --onefile `
+            --lto=yes `
+            --remove-output `
+            --windows-disable-console `
+            --enable-plugin=tk-inter `
+            --include-data-file="myfont.otf=myfont.otf" `
+            --output-filename="DownloadLog-win64" `
+            --assume-yes-for-downloads `
+            DownloadLog.py
+        shell: pwsh
+
+      - name: Upload Windows Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: DownloadLog-win64
+          path: DownloadLog-win64.exe
