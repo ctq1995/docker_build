@@ -79,8 +79,6 @@ jobs:
               --enable-plugin=upx \
               --linux-icon=app/logico.ico \
               --include-data-file=app/myfont.otf=myfont.otf \
-              --include-data-dir=/etc/fonts=etc/fonts \
-              --include-data-dir=/usr/share/fonts/truetype/dejavu=usr/share/fonts/truetype/dejavu \
               --output-filename=${build_name} \
               --assume-yes-for-downloads \
               app/DownloadLog.py
