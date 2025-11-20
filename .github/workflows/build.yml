@@ -71,10 +71,15 @@ jobs:
           RUN make -j$(nproc) && make altinstall
           
           WORKDIR /build
-          COPY requirements.txt app/ ./
+          # --- 已修正的 COPY 命令 ---
+          # 将 requirements 文件复制到 /build 的根目录
+          COPY requirements.txt .
+          # 将整个 'app' 目录复制到 /build 下，创建 /build/app/ 目录
+          COPY app/ ./app/
+          # 安装依赖项
           RUN python3.13 -m pip install --no-cache-dir -r requirements.txt nuitka
-          
-          # 关键：使用静态链接
+          # --- 未更改的 Nuitka 命令 ---
+          # 此命令现在是正确的，因为 /build/app/logico.ico 存在
           RUN python3.13 -m nuitka \
               --standalone \
               --onefile \
