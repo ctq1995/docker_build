@@ -71,29 +71,18 @@ jobs:
           RUN python3.13 -m pip install --no-cache-dir nuitka
 
           # --- CHANGE: Use the LTO_FLAG argument provided by the build command ---
-          RUN \
-            # 第 1 步：查找所需 .so 文件的确切路径
-            FONTCONFIG_PATH=$(find /usr -name "libfontconfig.so.1" | head -n 1) && \
-            FREETYPE_PATH=$(find /usr -name "libfreetype.so.6" | head -n 1) && \
-            \
-            echo "fontconfig: $FONTCONFIG_PATH" && \
-            echo "freetype: $FREETYPE_PATH" && \
-            \
-            # 第 2 步：运行 Nuitka，将 .so 文件作为数据文件包含进来
-            python3.13 -m nuitka \
-                --standalone \
-                --onefile \
-                ${LTO_FLAG} \
-                --remove-output \
-                --enable-plugin=tk-inter \
-                --enable-plugin=upx \
-                --linux-icon=app/logico.ico \
-                --include-data-file=app/myfont.otf=myfont.otf \
-                --include-data-file="$FONTCONFIG_PATH=libfontconfig.so.1" \
-                --include-data-file="$FREETYPE_PATH=libfreetype.so.6" \
-                --output-filename=${build_name} \
-                --assume-yes-for-downloads \
-                app/DownloadLog.py
+          RUN python3.13 -m nuitka \
+              --standalone \
+              --onefile \
+              ${LTO_FLAG} \
+              --remove-output \
+              --enable-plugin=tk-inter \
+              --enable-plugin=upx \
+              --linux-icon=app/logico.ico \
+              --include-data-file=app/myfont.otf=myfont.otf \
+              --output-filename=${build_name} \
+              --assume-yes-for-downloads \
+              app/DownloadLog.py
           EOF
 
       - name: Cache Nuitka
