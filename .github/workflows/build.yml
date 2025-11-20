@@ -50,11 +50,12 @@ jobs:
           ENV DEBIAN_FRONTEND=noninteractive
           
           RUN apt-get update && apt-get install -y --no-install-recommends \
-              build-essential wget ca-certificates libssl-dev zlib1g-dev libncurses5-dev \
-              libncursesw5-dev libreadline-dev libgdbm-dev libdb5.3-dev \
-              libsqlite3-dev libbz2-dev libexpat1-dev liblzma-dev tk-dev \
-              libffi-dev patchelf tzdata upx git fontconfig fonts-dejavu-core && \
-              rm -rf /var/lib/apt/lists/*
+            build-essential wget ca-certificates libssl-dev zlib1g-dev libncurses5-dev \
+            libncursesw5-dev libreadline-dev libgdbm-dev libdb5.3-dev \
+            libsqlite3-dev libbz2-dev libexpat1-dev liblzma-dev tk-dev \
+            libffi-dev patchelf tzdata upx git \
+            libfontconfig1-dev libfreetype6-dev && \
+            rm -rf /var/lib/apt/lists/*
 
           WORKDIR /tmp
           RUN git clone --depth 1 --branch v$PYTHON_VERSION https://github.com/python/cpython.git Python-$PYTHON_VERSION
@@ -71,17 +72,19 @@ jobs:
 
           # --- CHANGE: Use the LTO_FLAG argument provided by the build command ---
           RUN python3.13 -m nuitka \
-              --standalone \
-              --onefile \
-              ${LTO_FLAG} \
-              --remove-output \
-              --enable-plugin=tk-inter \
-              --enable-plugin=upx \
-              --linux-icon=app/logico.ico \
-              --include-data-file=app/myfont.otf=myfont.otf \
-              --output-filename=${build_name} \
-              --assume-yes-for-downloads \
-              app/DownloadLog.py
+            --standalone \
+            --onefile \
+            ${LTO_FLAG} \
+            --remove-output \
+            --enable-plugin=tk-inter \
+            --enable-plugin=upx \
+            --linux-icon=app/logico.ico \
+            --include-data-file=app/myfont.otf=myfont.otf \
+            --include-library=fontconfig \
+            --include-library=freetype \
+            --output-filename=${build_name} \
+            --assume-yes-for-downloads \
+            app/DownloadLog.py
           EOF
 
       - name: Cache Nuitka
