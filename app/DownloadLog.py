@@ -25,57 +25,44 @@ CONFIG_FILE = 'config.ini'
 
 def initialize_runtime_fontconfig():
     """
-    Generates a minimal fonts.conf at runtime to fix missing Fontconfig on Linux.
-    This forces the app to use the bundled font without relying on system files.
+    为打包的库在运行时配置 fontconfig。
     """
     if platform.system() != "Linux":
         return
 
-    # Only run in frozen (Nuitka) environment
     if getattr(sys, 'frozen', False):
         try:
-            # Nuitka extracts files to a temp dir, this is our base
             base_dir = os.path.dirname(os.path.abspath(__file__))
             
-            # Path for the temporary config file
-            config_file_path = os.path.join(base_dir, "runtime_fonts.conf")
+            # Nuitka 将打包的 .so 文件放在一个子目录中
+            lib_dir = os.path.join(base_dir, "_internal")
+            if os.path.exists(lib_dir):
+                # 添加到库搜索路径
+                current_ld_path = os.environ.get('LD_LIBRARY_PATH', '')
+                os.environ['LD_LIBRARY_PATH'] = f"{lib_dir}:{current_ld_path}"
             
-            # Define a user-writable cache directory
+            # 生成最小化的 fonts.conf
+            config_file = os.path.join(base_dir, "fonts.conf")
             cache_dir = os.path.join(os.path.expanduser("~"), ".cache", "fontconfig")
             os.makedirs(cache_dir, exist_ok=True)
 
-            # We only care about the directory where our app (and myfont.otf) is running
-            font_dirs = [base_dir]
-            
-            # Generate XML content
-            # This tells Fontconfig to ONLY look in the app folder
-            dir_xml = "\n".join([f"<dir>{d}</dir>" for d in font_dirs])
-            
-            xml_content = f"""<?xml version="1.0"?>
+            xml = f"""<?xml version="1.0"?>
 <!DOCTYPE fontconfig SYSTEM "fonts.dtd">
 <fontconfig>
-    {dir_xml}
+    <dir>{base_dir}</dir>
     <cachedir>{cache_dir}</cachedir>
-    <config>
-        <rescan>
-            <int>30</int>
-        </rescan>
-    </config>
 </fontconfig>
 """
-            # Write the config file
-            with open(config_file_path, "w", encoding="utf-8") as f:
-                f.write(xml_content)
+            with open(config_file, "w") as f:
+                f.write(xml)
             
-            # FORCE Fontconfig to use this file via Environment Variables
-            os.environ['FONTCONFIG_FILE'] = config_file_path
+            os.environ['FONTCONFIG_FILE'] = config_file
             os.environ['FONTCONFIG_PATH'] = base_dir
             
             print(f"[Info] Generated runtime font config: {config_file_path}")
             
         except Exception as e:
             print(f"[Warning] Failed to initialize runtime font config: {e}")
-
 
 def setup_linux_font():
     """
