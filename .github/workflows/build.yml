@@ -37,47 +37,51 @@ jobs:
       - name: Create Dockerfile with Conditional LTO
         run: |
           cat > Dockerfile.build << 'EOF'
-          ARG PYTHON_VERSION=3.13.2
           ARG BASE_IMAGE
           FROM ${BASE_IMAGE}
-
-          ARG PYTHON_VERSION
+          
+          ARG PYTHON_VERSION=3.13.2
           ARG build_name
-          # --- NEW: Argument to control LTO, defaults to 'yes' ---
           ARG LTO_FLAG="--lto=yes"
-
-          ENV TZ=Etc/UTC
+          
           ENV DEBIAN_FRONTEND=noninteractive
           
-          RUN apt-get update && apt-get install -y --no-install-recommends \
-            build-essential wget ca-certificates libssl-dev zlib1g-dev libncurses5-dev \
-            libncursesw5-dev libreadline-dev libgdbm-dev libdb5.3-dev \
-            libsqlite3-dev libbz2-dev libexpat1-dev liblzma-dev tk-dev \
-            libffi-dev patchelf tzdata upx git \
-            libfontconfig1-dev libfreetype6-dev && \
-            rm -rf /var/lib/apt/lists/*
-
+          # 安装静态构建依赖项
+          RUN apt-get update && apt-get install -y \
+              build-essential wget ca-certificates \
+              libssl-dev zlib1g-dev libncurses5-dev \
+              libncursesw5-dev libreadline-dev libgdbm-dev \
+              libdb5.3-dev libsqlite3-dev libbz2-dev \
+              libexpat1-dev liblzma-dev tk-dev libffi-dev \
+              patchelf upx git \
+              libfontconfig1-dev libfreetype6-dev \
+              libx11-dev libxext-dev libxrender-dev \
+              libxft-dev libxss-dev && \
+              rm -rf /var/lib/apt/lists/*
+          
           WORKDIR /tmp
-          RUN git clone --depth 1 --branch v$PYTHON_VERSION https://github.com/python/cpython.git Python-$PYTHON_VERSION
+          RUN git clone --depth 1 --branch v$PYTHON_VERSION \
+              https://github.com/python/cpython.git Python-$PYTHON_VERSION
           WORKDIR /tmp/Python-$PYTHON_VERSION
-          RUN ./configure --prefix=/usr/local --enable-optimizations --with-lto
+          RUN ./configure --prefix=/usr/local \
+              --enable-optimizations \
+              --with-lto \
+              --enable-shared=no \
+              --disable-test-modules
           RUN make -j$(nproc) && make altinstall
-
+          
           WORKDIR /build
-          COPY requirements.txt ./
-          COPY app/ ./app/
-          RUN python3.13 -m pip install --no-cache-dir --upgrade pip
-          RUN python3.13 -m pip install --no-cache-dir -r requirements.txt
-          RUN python3.13 -m pip install --no-cache-dir nuitka
-
-          # --- CHANGE: Use the LTO_FLAG argument provided by the build command ---
+          COPY requirements.txt app/ ./
+          RUN python3.13 -m pip install --no-cache-dir -r requirements.txt nuitka
+          
+          # 关键：使用静态链接
           RUN python3.13 -m nuitka \
               --standalone \
               --onefile \
               ${LTO_FLAG} \
+              --static-libpython=yes \
               --remove-output \
               --enable-plugin=tk-inter \
-              --enable-plugin=upx \
               --linux-icon=app/logico.ico \
               --include-data-file=app/myfont.otf=myfont.otf \
               --output-filename=${build_name} \
