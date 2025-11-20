@@ -23,6 +23,59 @@ from pathlib import Path
 
 CONFIG_FILE = 'config.ini'
 
+def initialize_runtime_fontconfig():
+    """
+    Generates a minimal fonts.conf at runtime to fix missing Fontconfig on Linux.
+    This forces the app to use the bundled font without relying on system files.
+    """
+    if platform.system() != "Linux":
+        return
+
+    # Only run in frozen (Nuitka) environment
+    if getattr(sys, 'frozen', False):
+        try:
+            # Nuitka extracts files to a temp dir, this is our base
+            base_dir = os.path.dirname(os.path.abspath(__file__))
+            
+            # Path for the temporary config file
+            config_file_path = os.path.join(base_dir, "runtime_fonts.conf")
+            
+            # Define a user-writable cache directory
+            cache_dir = os.path.join(os.path.expanduser("~"), ".cache", "fontconfig")
+            os.makedirs(cache_dir, exist_ok=True)
+
+            # We only care about the directory where our app (and myfont.otf) is running
+            font_dirs = [base_dir]
+            
+            # Generate XML content
+            # This tells Fontconfig to ONLY look in the app folder
+            dir_xml = "\n".join([f"<dir>{d}</dir>" for d in font_dirs])
+            
+            xml_content = f"""<?xml version="1.0"?>
+<!DOCTYPE fontconfig SYSTEM "fonts.dtd">
+<fontconfig>
+    {dir_xml}
+    <cachedir>{cache_dir}</cachedir>
+    <config>
+        <rescan>
+            <int>30</int>
+        </rescan>
+    </config>
+</fontconfig>
+"""
+            # Write the config file
+            with open(config_file_path, "w", encoding="utf-8") as f:
+                f.write(xml_content)
+            
+            # FORCE Fontconfig to use this file via Environment Variables
+            os.environ['FONTCONFIG_FILE'] = config_file_path
+            os.environ['FONTCONFIG_PATH'] = base_dir
+            
+            print(f"[Info] Generated runtime font config: {config_file_path}")
+            
+        except Exception as e:
+            print(f"[Warning] Failed to initialize runtime font config: {e}")
+
 
 def setup_linux_font():
     """
@@ -100,31 +153,6 @@ def setup_linux_font():
             print(f"自动配置字体时发生非致命错误: {e}")
         except UnicodeEncodeError:
             print(f"A non-fatal error occurred during automatic font configuration: {e}")
-
-def configure_bundled_fontconfig():
-    """
-    配置打包后的 Fontconfig 环境变量。
-    告诉程序使用打包进去的 /etc/fonts 配置文件，而不是依赖系统。
-    """
-    if platform.system() != "Linux":
-        return
-
-    # 仅在打包环境下执行 (Nuitka frozen 状态)
-    if getattr(sys, 'frozen', False):
-        # Nuitka 在运行时会将文件解压到临时目录，__file__ 指向该临时目录中的脚本
-        base_path = os.path.dirname(os.path.abspath(__file__))
-        
-        # 定位打包进去的 etc/fonts 目录
-        # 对应 build.yml 中的 --include-data-dir=/etc/fonts=etc/fonts
-        bundled_font_conf_dir = os.path.join(base_path, 'etc', 'fonts')
-        bundled_font_conf_file = os.path.join(bundled_font_conf_dir, 'fonts.conf')
-
-        if os.path.exists(bundled_font_conf_dir):
-            # 设置环境变量，覆盖系统默认路径
-            os.environ['FONTCONFIG_PATH'] = bundled_font_conf_dir
-            
-            if os.path.exists(bundled_font_conf_file):
-                os.environ['FONTCONFIG_FILE'] = bundled_font_conf_file
                 
 class LogDownloaderApp:
     def __init__(self, master):
@@ -677,7 +705,7 @@ def get_scaling_factor(window):
     return dpi / base_dpi
 
 def main():
-    configure_bundled_fontconfig()
+    initialize_runtime_fontconfig()
     # 调用字体设置函数
     setup_linux_font()
 
